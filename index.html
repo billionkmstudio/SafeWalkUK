@@ -407,7 +407,7 @@ const firebaseConfig={
 };
 let db=null;
 try{
-  if(firebaseConfig.apiKey!=='AIzaSyC6cj9BDb6_bQx536Kco4ccbOEPF-X8HyY'&&typeof firebase!=='undefined'){
+  if(firebaseConfig.apiKey!=='YOUR_API_KEY'&&typeof firebase!=='undefined'){
     firebase.initializeApp(firebaseConfig);
     db=firebase.firestore();
     console.log('Firebase connected — Overpass caching enabled');
