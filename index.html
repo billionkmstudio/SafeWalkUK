@@ -383,10 +383,10 @@ html{scroll-padding-top:env(safe-area-inset-top,0);}
   </div>
   <footer class="footer" id="mainFooter" onclick="toggleFooter()">
     <div class="footer-full">
-    © 2026 <a href="https://www.billionstudio.co.uk/" target="_blank" rel="noopener" style="color:var(--safe-t);text-decoration:none;font-weight:500;">Billion Studio</a>. All Rights Reserved. | <a href="mailto:info@billionstudio.app" style="color:var(--t2);text-decoration:none;" onclick="event.stopPropagation()">info@billionstudio.app</a> | <span style="font-family:'JetBrains Mono',monospace;">v1.5.11</span><br>
+    © 2026 <a href="https://www.billionstudio.co.uk/" target="_blank" rel="noopener" style="color:var(--safe-t);text-decoration:none;font-weight:500;">Billion Studio</a>. All Rights Reserved. | <a href="mailto:info@billionstudio.app" style="color:var(--t2);text-decoration:none;" onclick="event.stopPropagation()">info@billionstudio.app</a> | <span style="font-family:'JetBrains Mono',monospace;">v1.6.0</span><br>
     <span style="color:var(--t3);font-size:9px;line-height:1.6;">Important: SafeWalk UK uses publicly available crime, mapping and location data to provide an experimental route-risk indicator. Crime data may be incomplete or delayed, and a higher score does not guarantee safety. Always use your own judgement and follow local safety advice.</span>
     </div>
-    <div class="footer-hint">© Billion Studio · v1.5.11 · tap for info</div>
+    <div class="footer-hint">© Billion Studio · v1.6.0 · tap for info</div>
   </footer>
 </div>
 
@@ -876,28 +876,58 @@ function scoreRoute(r,cr){const co=r.geometry.coordinates;const timeMult=getTime
   // Exponential decay: high-crime areas still show time differentiation
   const rawScore=100*Math.exp(-totalRisk/190);
   r.crimeCount=nc.length;r.crimes=nc;
-  // Count nearby POI for this route (moved up: needed for isolation check below)
+  // Count nearby POI for this route (needed below for lighting + convergence)
   let cctvNear=0,safeNear=0;
   const midCoords=co[Math.floor(co.length/2)];
   poiCCTV.forEach(p=>{co.forEach((c,i)=>{if(i%10===0&&hav(p.lat,p.lon,c[1],c[0])<300)cctvNear++;});});
   poiSafe.forEach(p=>{co.forEach((c,i)=>{if(i%10===0&&hav(p.lat,p.lon,c[1],c[0])<300)safeNear++;});});
   cctvNear=Math.min(cctvNear,poiCCTV.length);safeNear=Math.min(safeNear,poiSafe.length);
-  // Lighting estimate from road types (moved up: needed for isolation check below)
-  const lightingScore=(()=>{let lit=0,total=0;(r.steps||[]).forEach(s=>{const d=s.distance;total+=d;
+
+  // ═══ STREET LIGHTING LAYER ═══
+  // Primary signal: real OSM street-lamp density along the route (countLampsNear
+  // counts distinct mapped lamps within 100m of the walked path), converted to
+  // lamps/km. Blended with the old road-type estimate as a floor, because OSM lamp
+  // tagging is incomplete in many areas — an A-road is almost always lit even where
+  // nobody's got round to tagging every lamppost — so sparse mapping doesn't read
+  // as "dark" on its own.
+  const lampsNear=countLampsNear(r);
+  const lampsPerKm=r.distance>0?lampsNear/(r.distance/1000):0;
+  const lampDensityScore=Math.min(100,Math.round(lampsPerKm/25*100)); // ~25 lamps/km ≈ well-lit main road
+  const roadTypeLighting=(()=>{let lit=0,total=0;(r.steps||[]).forEach(s=>{const d=s.distance;total+=d;
     if(s.ref&&/^A\d/.test(s.ref))lit+=d*0.9;
     else if(s.name&&/road|street|avenue|drive|lane|way|hill/i.test(s.name))lit+=d*0.7;
     else if(s.name&&/path|track|alley|cut/i.test(s.name))lit+=d*0.2;
     else lit+=d*0.5;
   });return total>0?Math.round(lit/total*100):50;})();
-  // Isolation-uncertainty cap: a route with near-zero recorded crime AND near-zero
-  // lighting/CCTV isn't "safe" — it usually just means nobody's there to report crime
-  // or light the street. Cap its score instead of letting sparse data read as safety.
-  // (Leaves normal routes with real lighting/CCTV data completely untouched.)
-  let score=rawScore*(1-distPenalty);
-  const isIsolated=lightingScore<35&&cctvNear===0;
-  if(isIsolated)score=Math.min(score,55);
+  const lightingScore=Math.round(lampDensityScore*0.65+roadTypeLighting*0.35);
+
+  // ═══ MULTI-SIGNAL CONVERGENCE ═══
+  // Crime, lighting and CCTV are each scored independently above. But a route
+  // where several *independent* layers are bad at once is riskier than the sum of
+  // its parts — a dark, camera-free street with active crime reports is a
+  // materially different situation to any one of those alone. Only escalate when
+  // signals actually corroborate each other, so a single bad layer is never
+  // punished twice.
+  const crimeBad=rawScore<60,lightingBad=lightingScore<40,cctvBad=cctvNear===0;
+  const convergenceCount=(crimeBad?1:0)+(lightingBad?1:0)+(cctvBad?1:0);
+  let convergenceMultiplier=1,convergenceCap=null,convergenceReason=null;
+  if(convergenceCount>=2){
+    if(crimeBad){
+      convergenceMultiplier=convergenceCount===3?0.60:0.82;
+      convergenceReason=convergenceCount===3
+        ?'Elevated crime, poor lighting and no CCTV all converge on this route — the combination is treated as higher risk than any one factor alone.'
+        :(lightingBad?'Elevated crime and poor street lighting converge on this route.':'Elevated crime and no CCTV coverage converge on this route.');
+    }else{
+      // Lighting + CCTV both bad but crime isn't flagged — this is the old
+      // "isolation-uncertainty" case: sparse data, not evidence of safety.
+      convergenceCap=55;
+      convergenceReason='This route has very little street lighting and no CCTV coverage nearby. Low recorded crime in an unlit, unmonitored area often just means few people go there — not that it\'s safe — so this route\'s score has been capped rather than scored as low-risk.';
+    }
+  }
+  let score=rawScore*(1-distPenalty)*convergenceMultiplier;
+  if(convergenceCap!==null)score=Math.min(score,convergenceCap);
   r.safetyScore=Math.round(Math.max(2,score));
-  r.isIsolated=isIsolated;
+  r.isIsolated=convergenceCap!==null; // kept for back-compat with existing UI checks
   // Store breakdown
   r.breakdown={
     violentCount:nc.filter(c=>['violent-crime','robbery','possession-of-weapons'].includes(c.category)).length,
@@ -914,8 +944,9 @@ function scoreRoute(r,cr){const co=r.geometry.coordinates;const timeMult=getTime
     crimeScore:Math.round(rawScore),
     cctvScore:Math.min(100,Math.round(cctvNear*15)),
     safeSpaceScore:Math.min(100,Math.round(safeNear*8)),
-    lightingScore,
-    isIsolated
+    lightingScore,lampsNear,lampsPerKm:Math.round(lampsPerKm*10)/10,
+    isIsolated:convergenceCap!==null,
+    crimeBad,lightingBad,cctvBad,convergenceCount,convergenceMultiplier,convergenceCap,convergenceReason
   };
 }
 
@@ -1166,7 +1197,7 @@ function openModal(type,routeIdx){
         html+=`<div class="dd-item"><div class="dd-ic" style="background:${s.n>=5?'var(--safe-g)':s.n>=2?'var(--warn-g)':'var(--danger-g)'}">💡</div><div class="dd-ct"><div class="dd-nm">${s.name}</div><div class="dd-dt">${s.n} lamp(s) within 100m</div></div><div class="dd-badge ${cls}">${s.n}</div></div>`;
       });
     }
-    html+=`<div class="dd-alert ${lampsNear>=20?'tip':'warn'}">${lampsNear>=20?'💡 This route has good street lighting coverage based on OpenStreetMap data.':'⚠️ Limited street lighting data available. Not all lamps are mapped on OpenStreetMap — actual coverage may be better. Consider using well-known main roads at night.'}</div>`;
+    html+=`<div class="dd-alert ${lampsNear>=20?'tip':'warn'}">${lampsNear>=20?'💡 This route has good street lighting coverage based on OpenStreetMap data.':'⚠️ Limited street lighting data available. Not all lamps are mapped on OpenStreetMap — actual coverage may be better. Consider using well-known main roads at night.'} Lighting now contributes directly to this route's Risk Score and combines with crime and CCTV data — see "Why this route?" for the full breakdown.</div>`;
   }
 
   else if(type==='why'){
@@ -1181,6 +1212,7 @@ function openModal(type,routeIdx){
       {label:'Anti-social',icon:'🟡',impact:-b.asbRisk,count:b.asbCount,desc:`${b.asbCount} ASB incident(s) nearby · Weight: 4×`,bad:true},
       {label:'Other crime',icon:'⚪',impact:-b.otherRisk,count:b.otherCount,desc:`${b.otherCount} other incident(s) · Weight: 1–3×`,bad:true},
       {label:'Route distance',icon:'📏',impact:-b.distPenalty,count:null,desc:`${fD(r.distance)} mi — longer routes have slightly higher exposure`,bad:true},
+      {label:'Street lighting',icon:'💡',impact:b.lightingScore<40?-Math.round((40-b.lightingScore)/2):Math.round((b.lightingScore-40)/5),count:b.lampsNear,desc:`${b.lampsNear} mapped lamp(s) near route (${b.lampsPerKm}/km)`,bad:b.lightingScore<40},
       {label:'CCTV coverage',icon:'📹',impact:b.cctvNear>0?Math.min(b.cctvNear*3,15):0,count:b.cctvNear,desc:`${b.cctvNear} camera(s) near route`,bad:false},
       {label:'Safe spaces',icon:'🏪',impact:b.safeNear>0?Math.min(b.safeNear*2,15):0,count:b.safeNear,desc:`${b.safeNear} safe venue(s) near route`,bad:false},
     ];
@@ -1205,8 +1237,10 @@ function openModal(type,routeIdx){
       </div>`;
     });
 
-    if(b.isIsolated){
-      html+=`<div class="dd-alert warn" style="margin-top:4px;">⚠️ This route has very little street lighting and no CCTV coverage nearby. Low recorded crime in an unlit, unmonitored area often just means few people go there — not that it's safe — so this route's score has been capped rather than scored as low-risk.</div>`;
+    if(b.convergenceReason){
+      const csev=b.convergenceCount===3?'danger':'warn';
+      const cicon=b.convergenceCount===3?'🔴':'⚠️';
+      html+=`<div class="dd-alert ${csev}" style="margin-top:4px;">${cicon} <strong>${b.convergenceCount} risk signals converge here.</strong> ${b.convergenceReason}</div>`;
     }
     if((!r.aRoads||r.aRoads.length===0)&&routes.length>1){
       const mainAlt=routes.filter(x=>x.i!==r.i&&x.aRoads&&x.aRoads.length>0).sort((a,b2)=>a.duration-b2.duration)[0];
@@ -1226,7 +1260,8 @@ function openModal(type,routeIdx){
         Base score: <strong>100</strong><br>
         Crime penalty: <strong style="color:var(--danger)">−${b.totalRisk}</strong><br>
         Distance adjustment: <strong style="color:var(--danger)">−${b.distPenalty}%</strong><br>
-        ${b.isIsolated?`Isolation cap: <strong style="color:var(--warn-t)">capped at 55</strong> (unlit, no CCTV — insufficient data to call it low-risk)<br>`:''}
+        ${b.convergenceMultiplier<1?`Convergence adjustment: <strong style="color:var(--warn-t)">×${b.convergenceMultiplier.toFixed(2)}</strong> (${b.convergenceCount} risk signals overlap)<br>`:''}
+        ${b.convergenceCap!==null?`Isolation cap: <strong style="color:var(--warn-t)">capped at ${b.convergenceCap}</strong> (unlit, no CCTV — insufficient data to call it low-risk)<br>`:''}
         <div style="border-top:1px solid var(--border);margin:4px 0;"></div>
         Final score: <strong style="color:${r.safetyScore>=70?'var(--safe-t)':r.safetyScore>=40?'var(--warn-t)':'var(--danger-t)'};">${r.safetyScore}/100</strong>
       </div>
@@ -1269,12 +1304,13 @@ function buildWT(){const r=routes[selR];if(!r)return;wtS=0;const rawSteps=r.step
 const raw=rawSteps.map(s=>{
   const co=s.geometry.coordinates,mi=Math.floor(co.length/2),lat=co[mi][1],lng=co[mi][0];
   let sc=0,sl=[];r.crimes.forEach(c=>{if(hav(+c.location.latitude,+c.location.longitude,lat,lng)<150){sc++;sl.push(c);}});
+  let lc=0;poiLamps.forEach(p=>{if(hav(p.lat,p.lon,lat,lng)<100)lc++;});
   const ss=Math.max(20,100-sc*8),d=s.distance,m=s.duration;
   let dir=s.maneuver?.modifier?`${s.maneuver.type} ${s.maneuver.modifier}`:s.maneuver?.type||'→';
   dir=dir.replace('depart','↗ Depart').replace('arrive','✓ Arrive').replace('turn right','↱ Right').replace('turn left','↰ Left').replace('continue','→ Continue');
   // Name fallback: name -> ref (road number) -> null (merge candidate)
   const name=(s.name&&s.name.trim())||s.ref||null;
-  return{name,dir,dist:d,dur:m,sc,sl,coords:co,lat,lng,isArrive:s.maneuver?.type==='arrive'};
+  return{name,dir,dist:d,dur:m,sc,sl,lc,coords:co,lat,lng,isArrive:s.maneuver?.type==='arrive'};
 });
 // Merge consecutive unnamed segments into the previous named segment (or next, if it's the first)
 const merged=[];
@@ -1285,6 +1321,7 @@ raw.forEach(seg=>{
     // merge into previous
     const prev=merged[merged.length-1];
     prev.dist+=seg.dist;prev.dur+=seg.dur;prev.sc+=seg.sc;prev.sl=prev.sl.concat(seg.sl);
+    prev.lc=(prev.lc||0)+seg.lc;
     prev.coords=prev.coords.concat(seg.coords);
     prev.lat=seg.lat;prev.lng=seg.lng; // extend to latest point for mini-map centering
   }
@@ -1294,11 +1331,20 @@ if(merged.length&&!merged[0].name)merged[0].name='Path from start';
 
 r._wt=merged.map(seg=>{
   const ss=Math.max(20,100-seg.sc*8),d=(seg.dist/1609.34).toFixed(2),m=Math.ceil(seg.dur/60);
+  const segDark=(seg.lc||0)===0;
   const tags=[];if(seg.sc===0)tags.push({t:'✓ No crimes',c:'g'});else if(seg.sc<=2)tags.push({t:`⚠ ${seg.sc} crime(s)`,c:'w'});else tags.push({t:`🔴 ${seg.sc} crimes`,c:'b'});
+  tags.push({t:segDark?'💡 No mapped lamps':`💡 ${seg.lc} lamp(s)`,c:segDark?'w':'g'});
   tags.push({t:`${d} mi · ${m} min`,c:''});
-  const al=[];if(seg.sc>3){const ct={};seg.sl.forEach(c=>{ct[c.category]=(ct[c.category]||0)+1;});const tp=Object.entries(ct).sort((a,b)=>b[1]-a[1])[0];al.push({t:'danger',i:'🔴',x:`<strong>High crime area</strong> — ${seg.sc} incidents. ${CL[tp[0]]||tp[0]} (${tp[1]}).`});}else if(seg.sc>0)al.push({t:'warning',i:'⚠️',x:`${seg.sc} crime(s) nearby.`});
-  if(ss>=80)al.push({t:'tip',i:'🟢',x:'Lower risk segment based on available crime data.'});
-  return{name:seg.name||'Unnamed road',dir:seg.dir,d,m,ss,sc:ss>=80?'s':ss>=60?'w':'d',tags,al,crimes:seg.sc,coords:seg.coords,lat:seg.lat,lng:seg.lng};
+  const al=[];
+  // Convergence: crime AND darkness on the same short stretch is flagged ahead of
+  // either factor alone — the walk-through's segment-level version of the
+  // route-level convergence scoring in scoreRoute().
+  if(seg.sc>=2&&segDark){al.push({t:'danger',i:'🔴',x:`<strong>Crime and no mapped lighting converge here</strong> — ${seg.sc} incident(s) on an unlit stretch.`});}
+  else if(seg.sc>3){const ct={};seg.sl.forEach(c=>{ct[c.category]=(ct[c.category]||0)+1;});const tp=Object.entries(ct).sort((a,b)=>b[1]-a[1])[0];al.push({t:'danger',i:'🔴',x:`<strong>High crime area</strong> — ${seg.sc} incidents. ${CL[tp[0]]||tp[0]} (${tp[1]}).`});}
+  else if(seg.sc>0)al.push({t:'warning',i:'⚠️',x:`${seg.sc} crime(s) nearby.`});
+  if(segDark&&seg.sc===0)al.push({t:'warning',i:'💡',x:'No street lamps mapped on this stretch — take extra care after dark.'});
+  if(ss>=80&&!segDark)al.push({t:'tip',i:'🟢',x:'Lower risk segment based on available crime and lighting data.'});
+  return{name:seg.name||'Unnamed road',dir:seg.dir,d,m,ss,sc:ss>=80?'s':ss>=60?'w':'d',tags,al,crimes:seg.sc,lamps:seg.lc,coords:seg.coords,lat:seg.lat,lng:seg.lng};
 });
 renderWT();}
 
