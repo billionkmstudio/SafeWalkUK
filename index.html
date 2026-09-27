@@ -90,6 +90,19 @@ html{scroll-padding-top:env(safe-area-inset-top,0);}
 .search-act:hover{background:var(--card-h);color:var(--t1);}
 .lang-btn{font-size:12px;color:var(--t2);background:var(--card);border:1px solid var(--border);border-radius:6px;padding:5px 10px;cursor:pointer;font-family:inherit;font-weight:500;}
 
+/* Saved / recent routes — one-tap re-search for a commute walked daily */
+.saved-bar{padding:0 16px 10px;background:var(--panel);display:none;}
+.saved-bar.show{display:block;}
+.saved-bar-label{font-size:10px;color:var(--t3);font-weight:600;margin-bottom:6px;letter-spacing:.3px;}
+.saved-chips{display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.saved-chip{display:flex;align-items:center;gap:6px;flex-shrink:0;background:var(--card);border:1px solid var(--border);border-radius:20px;padding:7px 8px 7px 12px;font-size:11px;font-weight:600;color:var(--t2);cursor:pointer;white-space:nowrap;transition:all .15s;}
+.saved-chip:hover{background:var(--card-h);border-color:var(--border-l);}
+.saved-chip.pinned{border-color:rgba(217,119,6,.4);background:var(--warn-g);color:var(--warn-t);}
+.saved-chip-x{width:18px;height:18px;border-radius:50%;background:var(--panel);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--t3);flex-shrink:0;}
+.saved-chip-x:hover{color:var(--danger-t);border-color:var(--danger);}
+.save-route-btn{flex-shrink:0;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:4px 9px;font-size:11px;font-weight:600;color:var(--t2);cursor:pointer;font-family:inherit;}
+.save-route-btn.saved{background:var(--warn-g);border-color:var(--warn);color:var(--warn-t);}
+
 /* Autocomplete */
 .ac-list{position:absolute;top:100%;left:18px;right:46px;background:var(--panel);border:1px solid var(--border);border-radius:8px;max-height:200px;overflow-y:auto;z-index:2000;display:none;box-shadow:var(--shadow-lg);}
 .ac-list.show{display:block;}
@@ -336,10 +349,17 @@ html{scroll-padding-top:env(safe-area-inset-top,0);}
     <button class="search-act" onclick="clearAll()" title="Clear">✕</button>
     <button class="search-go" id="goBtn" onclick="findRoute()">Go</button></div>
   </div>
+  <!-- Saved / recent routes — night-shift and commute users walk the same path daily,
+       so one tap here re-runs a previous search instead of retyping start/end each time. -->
+  <div class="saved-bar" id="savedBar">
+    <div class="saved-bar-label" id="savedBarLabel">SAVED &amp; RECENT ROUTES</div>
+    <div class="saved-chips" id="savedChips"></div>
+  </div>
   <!-- Compact one-line stand-in for the full search form, shown once a route is found —
        the map is the main event after a search, not the input form. Tap to edit again. -->
   <div class="search-summary" id="searchSummary" onclick="expandSearch()" style="display:none;">
     <span id="searchSummaryText"></span>
+    <button class="save-route-btn" id="saveRouteBtn" onclick="event.stopPropagation();pinCurrentRoute()">⭐ Save</button>
     <button class="search-summary-edit" onclick="event.stopPropagation();expandSearch()">✎ Edit</button>
   </div>
   <div class="status" id="status"><div class="spinner"></div><span id="statusText"></span></div>
@@ -383,10 +403,10 @@ html{scroll-padding-top:env(safe-area-inset-top,0);}
   </div>
   <footer class="footer" id="mainFooter" onclick="toggleFooter()">
     <div class="footer-full">
-    © 2026 <a href="https://www.billionstudio.co.uk/" target="_blank" rel="noopener" style="color:var(--safe-t);text-decoration:none;font-weight:500;">Billion Studio</a>. All Rights Reserved. | <a href="mailto:info@billionstudio.app" style="color:var(--t2);text-decoration:none;" onclick="event.stopPropagation()">info@billionstudio.app</a> | <span style="font-family:'JetBrains Mono',monospace;">v1.6.0</span><br>
+    © 2026 <a href="https://www.billionstudio.co.uk/" target="_blank" rel="noopener" style="color:var(--safe-t);text-decoration:none;font-weight:500;">Billion Studio</a>. All Rights Reserved. | <a href="mailto:info@billionstudio.app" style="color:var(--t2);text-decoration:none;" onclick="event.stopPropagation()">info@billionstudio.app</a> | <span style="font-family:'JetBrains Mono',monospace;">v1.7.0</span><br>
     <span style="color:var(--t3);font-size:9px;line-height:1.6;">Important: SafeWalk UK uses publicly available crime, mapping and location data to provide an experimental route-risk indicator. Crime data may be incomplete or delayed, and a higher score does not guarantee safety. Always use your own judgement and follow local safety advice.</span>
     </div>
-    <div class="footer-hint">© Billion Studio · v1.6.0 · tap for info</div>
+    <div class="footer-hint">© Billion Studio · v1.7.0 · tap for info</div>
   </footer>
 </div>
 
@@ -431,6 +451,7 @@ const CL={'anti-social-behaviour':'Anti-social 反社會行為','violent-crime':
 const CW={'violent-crime':10,'robbery':10,'possession-of-weapons':10,'burglary':6,'theft-from-the-person':7,'criminal-damage-arson':5,'anti-social-behaviour':4,'vehicle-crime':3,'public-order':4,'drugs':3,'shoplifting':1,'other-theft':3,'bicycle-theft':2,'other-crime':2};
 
 let map,routeLayers=[],crimeMarkers=[],crimeData=[],routes=[],selR=0,wtS=0,miniMap=null;
+let lastFrom=null,lastTo=null; // resolved endpoints of the current route, used by pinCurrentRoute()
 
 // ═══ FIREBASE (optional — app works fine without it, just no caching/reports) ═══
 // Paste your firebaseConfig object from Firebase Console > Project Settings > Your apps
@@ -580,6 +601,7 @@ function stopCompanion(arrived){
 }
 function initCompanionViewer(tripId){
   ['.search','.tabs'].forEach(sel=>{const el=document.querySelector(sel);if(el)el.style.display='none';});
+  document.getElementById('savedBar').classList.remove('show');
   document.getElementById('timeBar').style.display='none';
   document.getElementById('map').style.display='none';
   document.getElementById('sheet').style.display='none';
@@ -641,6 +663,7 @@ function closeCompanionViewer(){
   const introEl=document.querySelector('.intro');if(introEl)introEl.style.display='';
   document.getElementById('timeBar').style.display='';
   document.getElementById('map').style.display='';
+  renderSavedRoutes();
   if(window.history&&window.history.replaceState)window.history.replaceState(null,'',window.location.pathname);
   setTimeout(()=>{if(map)map.invalidateSize();},100);
 }
@@ -739,6 +762,7 @@ function toggleLang(){
     if(v==='wt')t.textContent=isZh?'🚶 路線預行':'🚶 Walk';
   });
   if(routes.length){highlightRoute(selR);}
+  renderSavedRoutes();
 }
 // Swap & Clear
 function swapRoute(){const f=document.getElementById('fromInput'),t=document.getElementById('toInput');const tmp=f.value;f.value=t.value;t.value=tmp;const tmpS=acS.from;acS.from=acS.to;acS.to=tmpS;}
@@ -768,6 +792,66 @@ function initMap(){map=L.map('map',{center:[51.237,-0.571],zoom:14});L.tileLayer
       acS.from={lat,lng,name:addr||'My Location'};
     }catch(e){document.getElementById('fromInput').value='My Location';acS.from={lat,lng,name:'My Location'};}
   },()=>{},{timeout:5000});}
+}
+
+// ═══ SAVED & RECENT ROUTES ═══
+// Night-shift and commute users walk the same start→end daily. Store searches in
+// localStorage (no account/backend needed) so a repeat trip is one tap, not
+// retyping both fields every time. Two kinds share one list:
+//  - "recent": auto-added after every successful search, capped, oldest dropped first.
+//  - "pinned": explicitly saved via the ⭐ Save button, kept indefinitely (until deleted),
+//    always sorted ahead of recent entries.
+const SAVED_ROUTES_KEY='safewalk_saved_routes',RECENT_CAP=5;
+let savedRoutes=[];
+function loadSavedRoutes(){try{savedRoutes=JSON.parse(localStorage.getItem(SAVED_ROUTES_KEY)||'[]');}catch(e){savedRoutes=[];}}
+function persistSavedRoutes(){try{localStorage.setItem(SAVED_ROUTES_KEY,JSON.stringify(savedRoutes));}catch(e){}}
+function sameRoute(a,f,t){return a.from.name===f.name&&a.to.name===t.name;}
+function recordRecentRoute(f,t){
+  if(!f||!t)return;
+  const existing=savedRoutes.find(x=>sameRoute(x,f,t));
+  if(existing){existing.ts=Date.now();persistSavedRoutes();renderSavedRoutes();return;} // already saved (pinned or recent) — just bump freshness, don't duplicate
+  savedRoutes.unshift({from:f,to:t,label:null,pinned:false,ts:Date.now()});
+  // Trim unpinned entries down to RECENT_CAP, keep all pinned ones
+  let seen=0;savedRoutes=savedRoutes.filter(x=>{if(x.pinned)return true;seen++;return seen<=RECENT_CAP;});
+  persistSavedRoutes();renderSavedRoutes();
+}
+function pinCurrentRoute(){
+  if(!lastFrom||!lastTo)return;
+  const existing=savedRoutes.find(x=>sameRoute(x,lastFrom,lastTo));
+  const defaultLabel=`${lastFrom.name} → ${lastTo.name}`;
+  const label=(prompt(isZh?'幫呢條路線改個名（例如「返工」）：':'Name this route (e.g. "Work commute"):',existing?.label||defaultLabel)||'').trim();
+  if(!label){ // cancelled
+    return;
+  }
+  if(existing){existing.pinned=true;existing.label=label;existing.ts=Date.now();}
+  else{savedRoutes.unshift({from:lastFrom,to:lastTo,label,pinned:true,ts:Date.now()});}
+  persistSavedRoutes();renderSavedRoutes();
+  const btn=document.getElementById('saveRouteBtn');if(btn){btn.textContent='⭐ Saved';btn.classList.add('saved');}
+  if(typeof gtag==='function')gtag('event','route_pinned');
+}
+function useSavedRoute(idx){
+  const s=savedRoutes[idx];if(!s)return;
+  document.getElementById('fromInput').value=s.from.name;
+  document.getElementById('toInput').value=s.to.name;
+  acS.from=s.from;acS.to=s.to;
+  findRoute();
+}
+function deleteSavedRoute(idx,ev){
+  if(ev)ev.stopPropagation();
+  savedRoutes.splice(idx,1);persistSavedRoutes();renderSavedRoutes();
+}
+function renderSavedRoutes(){
+  const bar=document.getElementById('savedBar'),wrap=document.getElementById('savedChips'),lbl=document.getElementById('savedBarLabel');
+  if(!bar||!wrap)return;
+  if(!savedRoutes.length){bar.classList.remove('show');return;}
+  const sorted=[...savedRoutes].sort((a,b)=>(b.pinned-a.pinned)||(b.ts-a.ts));
+  lbl.textContent=isZh?'已儲存及最近路線':'SAVED & RECENT ROUTES';
+  wrap.innerHTML=sorted.map(s=>{
+    const idx=savedRoutes.indexOf(s);
+    const text=s.label||`${s.from.name} → ${s.to.name}`;
+    return`<div class="saved-chip ${s.pinned?'pinned':''}" onclick="useSavedRoute(${idx})">${s.pinned?'⭐ ':'🕐 '}${text}<span class="saved-chip-x" onclick="deleteSavedRoute(${idx},event)" title="Remove">✕</span></div>`;
+  }).join('');
+  bar.classList.add('show');
 }
 
 // Autocomplete
@@ -954,6 +1038,7 @@ function scoreRoute(r,cr){const co=r.geometry.coordinates;const timeMult=getTime
 async function findRoute(){const fq=document.getElementById('fromInput').value.trim(),tq=document.getElementById('toInput').value.trim();if(!fq||!tq)return;document.getElementById('goBtn').disabled=true;showS('Finding route...');
   if(typeof gtag==='function')gtag('event','route_search',{from:fq,to:tq});
 try{const[f,t]=await Promise.all([geocode(fq,acS.from),geocode(tq,acS.to)]);
+  lastFrom=f;lastTo=t;
   // Check straight-line distance first
   const directDist=hav(f.lat,f.lng,t.lat,t.lng);
   if(directDist>16000){showS(`Too far to walk (${(directDist/1609).toFixed(0)} mi straight line). SafeWalk is designed for journeys under 10 miles. 距離太遠，SafeWalk 適用於 10 英里以內嘅步行路線。`,1);document.getElementById('goBtn').disabled=false;return;}
@@ -966,6 +1051,7 @@ try{const[f,t]=await Promise.all([geocode(fq,acS.from),geocode(tq,acS.to)]);
   const[crimeResult,]=await Promise.all([fetchCrimes(ac),fetchPOI(ac),fetchCommunityReports()]);
   crimeData=crimeResult;
   showS('Scoring safety...');routes.forEach(r=>scoreRoute(r,crimeData));routes.sort((a,b)=>b.safetyScore-a.safetyScore);clearMap();displayRoutes(f,t);showPOIMarkers();selR=0;highlightRoute(0);hideS();showShareBar();
+  recordRecentRoute(f,t);
   // Map is the main event: collapse the intro banner + full search form into a compact
   // summary, and default the route-card sheet to its collapsed (one-line score summary)
   // state, so the map gets most of the screen right after a search instead of the cards.
@@ -1541,12 +1627,19 @@ function toggleSheet(){document.getElementById('sheet').classList.toggle('collap
 function collapseSearchUI(){
   const introEl=document.querySelector('.intro');if(introEl)introEl.style.display='none';
   document.getElementById('searchBox').style.display='none';
+  document.getElementById('savedBar').classList.remove('show');
   document.getElementById('searchSummaryText').textContent=`${document.getElementById('fromInput').value} → ${document.getElementById('toInput').value}`;
   document.getElementById('searchSummary').style.display='flex';
+  // Reflect whether this exact route is already pinned, so the button doesn't
+  // falsely offer to "Save" something already saved.
+  const btn=document.getElementById('saveRouteBtn');
+  const alreadyPinned=lastFrom&&lastTo&&savedRoutes.some(x=>x.pinned&&sameRoute(x,lastFrom,lastTo));
+  if(btn){btn.textContent=alreadyPinned?'⭐ Saved':'⭐ Save';btn.classList.toggle('saved',!!alreadyPinned);}
 }
 function expandSearch(){
   document.getElementById('searchBox').style.display='';
   document.getElementById('searchSummary').style.display='none';
+  renderSavedRoutes();
 }
 // Keeps the collapsed sheet's one-line summary (label/score/distance/time) in sync
 // with whichever route is currently selected, so collapsing the card carousel never
@@ -1560,6 +1653,7 @@ function updateSheetSummary(){
 function toggleTimeBar(){document.getElementById('timeBar').classList.toggle('collapsed');}
 
 initMap();
+loadSavedRoutes();renderSavedRoutes();
 checkURLParams();
 </script>
 </body>

@@ -5,7 +5,7 @@
 // (Live Companion) calls always go to the network — caching those would risk showing
 // stale/wrong safety information, which is worse than showing an error.
 
-const SW_VERSION = 'v1.6.0';
+const SW_VERSION = 'v1.7.0';
 const SHELL_CACHE = `safewalk-shell-${SW_VERSION}`;
 const RUNTIME_CACHE = `safewalk-runtime-${SW_VERSION}`;
 const TILE_CACHE = `safewalk-tiles-${SW_VERSION}`;
