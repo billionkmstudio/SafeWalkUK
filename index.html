@@ -1185,7 +1185,7 @@ function buildRouteCard(r,i,fastest,bestScore,topDuration){
       compareNote=`<div style="margin-top:4px;font-size:10px;color:var(--warn-t);font-weight:500;">⚠ Higher risk (${r.safetyScore} vs ${bestScore}) · ${timeStr}</div>`;
     }
   }
-  return `<div class="rc ${i===0?'on':''}" onclick="highlightRoute(${i})" id="rc-${i}"><div class="rc-h"><span class="rc-label">${label}</span><span class="rc-score">${r.safetyScore}/100</span></div><div class="rc-stats"><div><div class="rc-v">${fD(r.distance)} mi</div><div class="rc-l">Distance</div></div><div><div class="rc-v">${fT(r.duration)}</div><div class="rc-l">Walking</div></div><div><div class="rc-v">${r.crimeCount}</div><div class="rc-l">Crimes</div></div><div><div class="rc-v">${r.safetyScore}</div><div class="rc-l">Safety Score</div></div></div>${timeLabel}${compareNote}${warn}${residentialNote}${absoluteRiskNote}<div style="margin-top:6px;text-align:center;"><button onclick="event.stopPropagation();openModal('why',${i})" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 14px;font-size:11px;font-weight:600;color:var(--safe-t);cursor:pointer;font-family:inherit;">Why this route?</button></div></div>`;
+  return `<div class="rc ${i===0?'on':''}" onclick="highlightRoute(${i})" id="rc-${i}"><div class="rc-h"><span class="rc-label">${label}</span><span class="rc-score">${r.safetyScore}/100</span></div><div class="rc-stats"><div><div class="rc-v">${fD(r.distance)} mi</div><div class="rc-l">Distance</div></div><div><div class="rc-v">${fT(r.duration)}</div><div class="rc-l">Walking</div></div><div><div class="rc-v">${r.crimeCount}</div><div class="rc-l">Crimes</div></div><div><div class="rc-v">${r.safetyScore}</div><div class="rc-l">Risk Score</div></div></div>${timeLabel}${compareNote}${warn}${residentialNote}${absoluteRiskNote}<div style="margin-top:6px;text-align:center;"><button onclick="event.stopPropagation();openModal('why',${i})" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 14px;font-size:11px;font-weight:600;color:var(--safe-t);cursor:pointer;font-family:inherit;">Why this route?</button></div></div>`;
 }
 
 // ═══ AFTER DARK COMPARISON ═══
@@ -1632,7 +1632,7 @@ function getShareURL(){
 
 function shareRoute(method){
   const url=getShareURL();
-  const text=`SafeWalk UK — Check this walking route's safety score`;
+  const text=`SafeWalk UK — Check this walking route's risk score`;
   if(method==='copy'){
     navigator.clipboard.writeText(url).then(()=>{
       const btn=document.querySelector('.share-btn');btn.classList.add('copied');btn.textContent='✓ Copied!';
