@@ -403,10 +403,10 @@ html{scroll-padding-top:env(safe-area-inset-top,0);}
   </div>
   <footer class="footer" id="mainFooter" onclick="toggleFooter()">
     <div class="footer-full">
-    © 2026 <a href="https://www.billionstudio.co.uk/" target="_blank" rel="noopener" style="color:var(--safe-t);text-decoration:none;font-weight:500;">Billion Studio</a>. All Rights Reserved. | <a href="mailto:info@billionstudio.app" style="color:var(--t2);text-decoration:none;" onclick="event.stopPropagation()">info@billionstudio.app</a> | <span style="font-family:'JetBrains Mono',monospace;">v1.7.0</span><br>
+    © 2026 <a href="https://www.billionstudio.co.uk/" target="_blank" rel="noopener" style="color:var(--safe-t);text-decoration:none;font-weight:500;">Billion Studio</a>. All Rights Reserved. | <a href="mailto:info@billionstudio.app" style="color:var(--t2);text-decoration:none;" onclick="event.stopPropagation()">info@billionstudio.app</a> | <span style="font-family:'JetBrains Mono',monospace;">v1.8.0</span><br>
     <span style="color:var(--t3);font-size:9px;line-height:1.6;">Important: SafeWalk UK uses publicly available crime, mapping and location data to provide an experimental route-risk indicator. Crime data may be incomplete or delayed, and a higher score does not guarantee safety. Always use your own judgement and follow local safety advice.</span>
     </div>
-    <div class="footer-hint">© Billion Studio · v1.7.0 · tap for info</div>
+    <div class="footer-hint">© Billion Studio · v1.8.0 · tap for info</div>
   </footer>
 </div>
 
@@ -452,6 +452,7 @@ const CW={'violent-crime':10,'robbery':10,'possession-of-weapons':10,'burglary':
 
 let map,routeLayers=[],crimeMarkers=[],crimeData=[],routes=[],selR=0,wtS=0,miniMap=null;
 let lastFrom=null,lastTo=null; // resolved endpoints of the current route, used by pinCurrentRoute()
+let autoLoadingDefault=false; // true when a default saved route will auto-search on load
 
 // ═══ FIREBASE (optional — app works fine without it, just no caching/reports) ═══
 // Paste your firebaseConfig object from Firebase Console > Project Settings > Your apps
@@ -780,8 +781,9 @@ if(localStorage.getItem('theme')==='dark'){document.documentElement.setAttribute
 
 // Map
 function initMap(){map=L.map('map',{center:[51.237,-0.571],zoom:14});L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap',maxZoom:19}).addTo(map);
-  // Center on user location and auto-fill Start
-  if(navigator.geolocation){navigator.geolocation.getCurrentPosition(async p=>{
+  // Center on user location and auto-fill Start — skipped when a default saved
+  // route is about to auto-search, so geolocation doesn't overwrite it mid-load.
+  if(navigator.geolocation&&!autoLoadingDefault){navigator.geolocation.getCurrentPosition(async p=>{
     const lat=p.coords.latitude,lng=p.coords.longitude;
     map.setView([lat,lng],14);
     // Reverse geocode to get address
@@ -809,11 +811,20 @@ function sameRoute(a,f,t){return a.from.name===f.name&&a.to.name===t.name;}
 function recordRecentRoute(f,t){
   if(!f||!t)return;
   const existing=savedRoutes.find(x=>sameRoute(x,f,t));
-  if(existing){existing.ts=Date.now();persistSavedRoutes();renderSavedRoutes();return;} // already saved (pinned or recent) — just bump freshness, don't duplicate
-  savedRoutes.unshift({from:f,to:t,label:null,pinned:false,ts:Date.now()});
+  if(existing){existing.ts=Date.now();if(!existing.pinned)existing.hour=selectedHour;persistSavedRoutes();renderSavedRoutes();return;} // already saved (pinned or recent) — just bump freshness, don't duplicate
+  savedRoutes.unshift({from:f,to:t,label:null,pinned:false,hour:selectedHour,isDefault:false,ts:Date.now()});
   // Trim unpinned entries down to RECENT_CAP, keep all pinned ones
   let seen=0;savedRoutes=savedRoutes.filter(x=>{if(x.pinned)return true;seen++;return seen<=RECENT_CAP;});
   persistSavedRoutes();renderSavedRoutes();
+}
+// Display labels for the same hour values the time-pills use (data-h)
+const TIME_PILL_LABELS={now:'Now',18:'18:00',21:'21:00',23:'23:00',1:'01:00',3:'03:00'};
+// Sets selectedHour and highlights the matching time-pill, without needing an
+// existing route to rescore (used when loading a saved route's usual time).
+function applySavedHour(h){
+  if(h===undefined||h===null)return;
+  selectedHour=h;
+  document.querySelectorAll('.time-pill').forEach(p=>p.classList.toggle('on',p.dataset.h===String(h)));
 }
 function pinCurrentRoute(){
   if(!lastFrom||!lastTo)return;
@@ -823,17 +834,39 @@ function pinCurrentRoute(){
   if(!label){ // cancelled
     return;
   }
-  if(existing){existing.pinned=true;existing.label=label;existing.ts=Date.now();}
-  else{savedRoutes.unshift({from:lastFrom,to:lastTo,label,pinned:true,ts:Date.now()});}
-  persistSavedRoutes();renderSavedRoutes();
+  // Remember the time-of-night setting too — a night-shift commute is usually
+  // walked at the same hour every time, so re-loading the route should restore it.
+  if(existing){existing.pinned=true;existing.label=label;existing.ts=Date.now();existing.hour=selectedHour;}
+  else{savedRoutes.unshift({from:lastFrom,to:lastTo,label,pinned:true,hour:selectedHour,isDefault:false,ts:Date.now()});}
+  persistSavedRoutes();
   const btn=document.getElementById('saveRouteBtn');if(btn){btn.textContent='⭐ Saved';btn.classList.add('saved');}
   if(typeof gtag==='function')gtag('event','route_pinned');
+  // Offer to make it the route that loads automatically next time the app is opened
+  const target=existing||savedRoutes[0];
+  if(confirm(isZh?'開啟 App 時自動搜尋呢條路線？':'Load this route automatically when you open the app?')){
+    setDefaultRoute(savedRoutes.indexOf(target));
+  }else{
+    renderSavedRoutes();
+  }
+}
+// Only one saved route can be the auto-loading default at a time. Restricted to
+// pinned entries in the UI (renderSavedRoutes only shows the 🏠 toggle on those)
+// since "recent" entries get trimmed and shouldn't silently vanish as the default.
+function setDefaultRoute(idx,ev){
+  if(ev)ev.stopPropagation();
+  const target=savedRoutes[idx];if(!target)return;
+  const turningOn=!target.isDefault;
+  savedRoutes.forEach(x=>x.isDefault=false);
+  if(turningOn)target.isDefault=true;
+  persistSavedRoutes();renderSavedRoutes();
+  if(typeof gtag==='function')gtag('event','default_route_set',{on:turningOn});
 }
 function useSavedRoute(idx){
   const s=savedRoutes[idx];if(!s)return;
   document.getElementById('fromInput').value=s.from.name;
   document.getElementById('toInput').value=s.to.name;
   acS.from=s.from;acS.to=s.to;
+  applySavedHour(s.hour);
   findRoute();
 }
 function deleteSavedRoute(idx,ev){
@@ -849,7 +882,9 @@ function renderSavedRoutes(){
   wrap.innerHTML=sorted.map(s=>{
     const idx=savedRoutes.indexOf(s);
     const text=s.label||`${s.from.name} → ${s.to.name}`;
-    return`<div class="saved-chip ${s.pinned?'pinned':''}" onclick="useSavedRoute(${idx})">${s.pinned?'⭐ ':'🕐 '}${text}<span class="saved-chip-x" onclick="deleteSavedRoute(${idx},event)" title="Remove">✕</span></div>`;
+    const timeTag=s.hour&&s.hour!=='now'?` · ${TIME_PILL_LABELS[s.hour]||s.hour}`:'';
+    const homeBtn=s.pinned?`<span class="saved-chip-x" onclick="setDefaultRoute(${idx},event)" title="${s.isDefault?(isZh?'取消預設':'Unset default'):(isZh?'設為預設':'Set as default')}" style="${s.isDefault?'background:var(--safe-g);border-color:var(--safe);color:var(--safe-t);':''}">🏠</span>`:'';
+    return`<div class="saved-chip ${s.pinned?'pinned':''}" onclick="useSavedRoute(${idx})">${s.isDefault?'🏠 ':s.pinned?'⭐ ':'🕐 '}${text}${timeTag}${homeBtn}<span class="saved-chip-x" onclick="deleteSavedRoute(${idx},event)" title="Remove">✕</span></div>`;
   }).join('');
   bar.classList.add('show');
 }
@@ -1529,7 +1564,7 @@ const manifestLink=document.createElement('link');manifestLink.rel='manifest';ma
 function checkURLParams(){
   const params=new URLSearchParams(window.location.search);
   const tripId=params.get('trip');
-  if(tripId){initCompanionViewer(tripId);return;}
+  if(tripId){initCompanionViewer(tripId);return true;}
   const from=params.get('from'),to=params.get('to'),time=params.get('time');
   if(from&&to){
     document.getElementById('fromInput').value=from;
@@ -1539,7 +1574,9 @@ function checkURLParams(){
       document.querySelectorAll('.time-pill').forEach(p=>{p.classList.toggle('on',p.dataset.h===time);});
     }
     setTimeout(()=>findRoute(),500);
+    return true;
   }
+  return false;
 }
 
 // ═══ PWA INSTALL PROMPT ═══
@@ -1652,9 +1689,23 @@ function updateSheetSummary(){
 }
 function toggleTimeBar(){document.getElementById('timeBar').classList.toggle('collapsed');}
 
+// Load saved routes first so initMap() knows whether to skip its own geolocation
+// auto-fill (a default route already has its own fixed starting point).
+loadSavedRoutes();
+const _defaultRoute=savedRoutes.find(x=>x.isDefault);
+if(_defaultRoute)autoLoadingDefault=true;
 initMap();
-loadSavedRoutes();renderSavedRoutes();
-checkURLParams();
+renderSavedRoutes();
+const _handledByURL=checkURLParams();
+// Auto-load the default saved route, unless a shared link (?from=&to=...) or a
+// Live Companion tracking link (?trip=...) already took over the screen.
+if(_defaultRoute&&!_handledByURL){
+  document.getElementById('fromInput').value=_defaultRoute.from.name;
+  document.getElementById('toInput').value=_defaultRoute.to.name;
+  acS.from=_defaultRoute.from;acS.to=_defaultRoute.to;
+  applySavedHour(_defaultRoute.hour);
+  findRoute();
+}
 </script>
 </body>
 </html>
