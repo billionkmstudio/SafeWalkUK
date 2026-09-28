@@ -128,24 +128,25 @@ html{scroll-padding-top:env(safe-area-inset-top,0);}
 .leaflet-control-zoom a{background:var(--panel)!important;color:var(--t2)!important;border-color:var(--border)!important;}
 
 /* Route sheet */
-.sheet{background:var(--panel);border-top:1px solid var(--border);max-height:40vh;overflow:hidden;display:none;box-shadow:0 -2px 8px rgba(0,0,0,.06);}
-.sheet.show{display:block;}
-.sheet-handle{width:44px;height:5px;background:var(--border-l);border-radius:3px;margin:6px auto 4px;cursor:pointer;padding:6px 20px;box-sizing:content-box;}
+.sheet{background:var(--panel);border-top:1px solid var(--border);max-height:40vh;overflow:hidden;display:none;flex-direction:column;box-shadow:0 -2px 8px rgba(0,0,0,.06);}
+.sheet.show{display:flex;}
+.sheet-handle{width:44px;height:5px;background:var(--border-l);border-radius:3px;margin:6px auto 4px;cursor:pointer;padding:6px 20px;box-sizing:content-box;flex-shrink:0;}
 .sheet.collapsed .routes{display:none;}
 .sheet.collapsed{max-height:58px;}
 /* Collapsed state isn't empty — it still shows the selected route's label/score/
    distance/time in one line, so the map can take most of the screen by default
    without losing the one number (safety score) people actually glance at. */
-.sheet-summary-collapsed{display:none;padding:0 16px 10px;font-size:12px;font-weight:600;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;}
+.sheet-summary-collapsed{display:none;padding:0 16px 10px;font-size:12px;font-weight:600;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;flex-shrink:0;}
 .sheet.collapsed .sheet-summary-collapsed{display:flex;}
-/* Fixed height on .routes (not just the outer .sheet) so each card can reserve the
-   remaining space for its own internal scroll. Earlier this relied on the WHOLE
-   card (.rc) scrolling internally, but a card that grows tall from stacked warning
-   notes could still bury the "Why this route?" button below the fold with no
-   obvious way to reach it (nothing about the card looked scrollable). Fixed now by
-   splitting the card in two: .rc-body scrolls internally, .rc-why is a pinned
-   footer that's always visible regardless of how much warning text stacks above it. */
-.routes{display:flex;gap:8px;padding:6px 16px 10px;overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;height:calc(40vh - 34px);}
+/* .routes used to be given a height via calc(40vh - <fixed handle/banner px>), which
+   silently assumed exactly how tall the handle + risk banner above it would be. Once
+   the risk banner grew (two-line disclaimer text), that assumption went stale and
+   .routes claimed more height than .sheet actually had left, so .sheet's own
+   overflow:hidden clipped the bottom of every card — including the pinned "Why this
+   route?" footer below — with no visible sign anything was cut off. Using flex:1 on
+   .routes instead makes it always take exactly the space actually left over inside
+   .sheet (a flex column), however tall the handle/banner end up being. */
+.routes{display:flex;gap:8px;padding:6px 16px 10px;overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;flex:1;min-height:0;}
 .rc{width:210px;min-width:210px;flex-shrink:0;height:100%;display:flex;flex-direction:column;overflow:hidden;background:var(--card);border:2px solid var(--border);border-radius:12px;padding:10px;cursor:pointer;transition:all .2s;font-size:12px;}
 .rc-body{flex:1;min-height:0;overflow-y:auto;overflow-wrap:break-word;-webkit-overflow-scrolling:touch;}
 .rc-why{flex-shrink:0;margin-top:6px;text-align:center;}
@@ -204,7 +205,7 @@ html{scroll-padding-top:env(safe-area-inset-top,0);}
 .gate-btn{width:100%;margin-top:16px;padding:13px;border:none;border-radius:10px;background:var(--route,#2563eb);color:#fff;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;}
 
 /* ═══ RISK BANNER (shown above route results) ═══ */
-.risk-banner{display:flex;align-items:flex-start;gap:8px;padding:9px 12px;margin:0 0 10px;background:var(--warn-g);border:1px solid var(--warn);border-radius:10px;font-size:11px;line-height:1.5;color:var(--t2);cursor:pointer;}
+.risk-banner{display:flex;align-items:center;gap:6px;padding:5px 10px;margin:0 0 6px;background:var(--warn-g);border:1px solid var(--warn);border-radius:8px;font-size:10.5px;line-height:1.3;color:var(--t2);cursor:pointer;flex-shrink:0;}
 .risk-banner .rb-ic{flex-shrink:0;font-size:14px;}
 .risk-banner .rb-link{color:var(--warn-t);font-weight:700;text-decoration:underline;white-space:nowrap;}
 .dd-sec{font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin:14px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--border);}
@@ -346,7 +347,7 @@ html{scroll-padding-top:env(safe-area-inset-top,0);}
 
 @media(max-width:420px){.det-grid{grid-template-columns:1fr 1fr;}}
 @media(max-width:768px){.tab{font-size:11px;padding:10px 4px;}.wt-map-mini{height:280px;}.mc-val{font-size:20px;}.modal-sh{max-height:90vh;}
-.sheet{max-height:34vh;}.routes{height:calc(34vh - 34px);}.rc{width:178px;min-width:178px;padding:8px;}.rc-v{font-size:12px;}.rc-l{font-size:8px;}.rc-h{margin-bottom:4px;}.rc-stats{gap:4px;}
+.sheet{max-height:34vh;}.rc{width:178px;min-width:178px;padding:8px;}.rc-v{font-size:12px;}.rc-l{font-size:8px;}.rc-h{margin-bottom:4px;}.rc-stats{gap:4px;}
 }
 </style>
 </head>
@@ -403,7 +404,7 @@ html{scroll-padding-top:env(safe-area-inset-top,0);}
     <div class="tab" data-v="wt" onclick="switchTab('wt')">🚶 Walk</div>
   </div>
   <div id="map"></div>
-  <div class="sheet" id="sheet"><div class="sheet-handle" onclick="toggleSheet()" id="sheetHandle"></div><div class="sheet-summary-collapsed" id="sheetSummaryCollapsed" onclick="toggleSheet()"></div><div class="risk-banner" id="riskBanner" onclick="openLegalModal()"><span class="rb-ic">⚠️</span><span id="riskBannerText">Risk Score is an experimental estimate, not a safety guarantee. <span class="rb-link">Learn more</span></span></div><div class="routes" id="routeCards"></div></div>
+  <div class="sheet" id="sheet"><div class="sheet-handle" onclick="toggleSheet()" id="sheetHandle"></div><div class="sheet-summary-collapsed" id="sheetSummaryCollapsed" onclick="toggleSheet()"></div><div class="risk-banner" id="riskBanner" onclick="openLegalModal()"><span class="rb-ic">⚠️</span><span id="riskBannerText">Experimental estimate, not a safety guarantee <span class="rb-link">Learn more</span></span></div><div class="routes" id="routeCards"></div></div>
   <div class="share-bar" id="shareBar">
     <button class="share-btn" onclick="shareRoute('copy')">📋 Copy Link</button>
     <button class="share-btn" onclick="shareRoute('whatsapp')">💬 WhatsApp</button>
@@ -427,10 +428,10 @@ html{scroll-padding-top:env(safe-area-inset-top,0);}
   </div>
   <footer class="footer" id="mainFooter" onclick="toggleFooter()">
     <div class="footer-full">
-    © 2026 <a href="https://www.billionstudio.co.uk/" target="_blank" rel="noopener" style="color:var(--safe-t);text-decoration:none;font-weight:500;">Billion Studio</a>. All Rights Reserved. | <a href="mailto:info@billionstudio.app" style="color:var(--t2);text-decoration:none;" onclick="event.stopPropagation()">info@billionstudio.app</a> | <a href="#" onclick="event.stopPropagation();openLegalModal();" style="color:var(--t2);text-decoration:underline;">Disclaimer &amp; Terms</a> | <span style="font-family:'JetBrains Mono',monospace;">v1.9.1</span><br>
+    © 2026 <a href="https://www.billionstudio.co.uk/" target="_blank" rel="noopener" style="color:var(--safe-t);text-decoration:none;font-weight:500;">Billion Studio</a>. All Rights Reserved. | <a href="mailto:info@billionstudio.app" style="color:var(--t2);text-decoration:none;" onclick="event.stopPropagation()">info@billionstudio.app</a> | <a href="#" onclick="event.stopPropagation();openLegalModal();" style="color:var(--t2);text-decoration:underline;">Disclaimer &amp; Terms</a> | <span style="font-family:'JetBrains Mono',monospace;">v1.9.2</span><br>
     <span style="color:var(--t3);font-size:9px;line-height:1.6;">Important: SafeWalk UK uses publicly available crime, mapping and location data to provide an experimental route-risk indicator. Crime data may be incomplete or delayed, and a higher score does not guarantee safety. Always use your own judgement and follow local safety advice.</span>
     </div>
-    <div class="footer-hint">© Billion Studio · v1.9.1 · tap for info</div>
+    <div class="footer-hint">© Billion Studio · v1.9.2 · tap for info</div>
   </footer>
 </div>
 
@@ -802,7 +803,7 @@ function toggleLang(){
     if(v==='wt')t.textContent=isZh?'🚶 路線預行':'🚶 Walk';
   });
   const rbt=document.getElementById('riskBannerText');
-  if(rbt)rbt.innerHTML=isZh?'風險評分只係實驗性估算，並非安全保證。 <span class="rb-link">了解更多</span>':'Risk Score is an experimental estimate, not a safety guarantee. <span class="rb-link">Learn more</span>';
+  if(rbt)rbt.innerHTML=isZh?'風險評分屬實驗性估算，非安全保證 <span class="rb-link">了解更多</span>':'Experimental estimate, not a safety guarantee <span class="rb-link">Learn more</span>';
   if(routes.length){highlightRoute(selR);}
   renderSavedRoutes();
 }
