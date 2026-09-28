@@ -139,10 +139,16 @@ html{scroll-padding-top:env(safe-area-inset-top,0);}
 .sheet-summary-collapsed{display:none;padding:0 16px 10px;font-size:12px;font-weight:600;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;}
 .sheet.collapsed .sheet-summary-collapsed{display:flex;}
 /* Fixed height on .routes (not just the outer .sheet) so each card can reserve the
-   remaining space for its own internal scroll — a card that grows tall from stacked
-   warning notes no longer clips its "Why this route?" button with no way to reach it. */
+   remaining space for its own internal scroll. Earlier this relied on the WHOLE
+   card (.rc) scrolling internally, but a card that grows tall from stacked warning
+   notes could still bury the "Why this route?" button below the fold with no
+   obvious way to reach it (nothing about the card looked scrollable). Fixed now by
+   splitting the card in two: .rc-body scrolls internally, .rc-why is a pinned
+   footer that's always visible regardless of how much warning text stacks above it. */
 .routes{display:flex;gap:8px;padding:6px 16px 10px;overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;height:calc(40vh - 34px);}
-.rc{width:210px;min-width:210px;flex-shrink:0;height:100%;overflow-y:auto;overflow-wrap:break-word;-webkit-overflow-scrolling:touch;background:var(--card);border:2px solid var(--border);border-radius:12px;padding:10px;cursor:pointer;transition:all .2s;font-size:12px;}
+.rc{width:210px;min-width:210px;flex-shrink:0;height:100%;display:flex;flex-direction:column;overflow:hidden;background:var(--card);border:2px solid var(--border);border-radius:12px;padding:10px;cursor:pointer;transition:all .2s;font-size:12px;}
+.rc-body{flex:1;min-height:0;overflow-y:auto;overflow-wrap:break-word;-webkit-overflow-scrolling:touch;}
+.rc-why{flex-shrink:0;margin-top:6px;text-align:center;}
 .rc.on{border-color:var(--safe);background:var(--safe-g);}
 .rc-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
 .rc-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;}
@@ -421,10 +427,10 @@ html{scroll-padding-top:env(safe-area-inset-top,0);}
   </div>
   <footer class="footer" id="mainFooter" onclick="toggleFooter()">
     <div class="footer-full">
-    © 2026 <a href="https://www.billionstudio.co.uk/" target="_blank" rel="noopener" style="color:var(--safe-t);text-decoration:none;font-weight:500;">Billion Studio</a>. All Rights Reserved. | <a href="mailto:info@billionstudio.app" style="color:var(--t2);text-decoration:none;" onclick="event.stopPropagation()">info@billionstudio.app</a> | <a href="#" onclick="event.stopPropagation();openLegalModal();" style="color:var(--t2);text-decoration:underline;">Disclaimer &amp; Terms</a> | <span style="font-family:'JetBrains Mono',monospace;">v1.9.0</span><br>
+    © 2026 <a href="https://www.billionstudio.co.uk/" target="_blank" rel="noopener" style="color:var(--safe-t);text-decoration:none;font-weight:500;">Billion Studio</a>. All Rights Reserved. | <a href="mailto:info@billionstudio.app" style="color:var(--t2);text-decoration:none;" onclick="event.stopPropagation()">info@billionstudio.app</a> | <a href="#" onclick="event.stopPropagation();openLegalModal();" style="color:var(--t2);text-decoration:underline;">Disclaimer &amp; Terms</a> | <span style="font-family:'JetBrains Mono',monospace;">v1.9.1</span><br>
     <span style="color:var(--t3);font-size:9px;line-height:1.6;">Important: SafeWalk UK uses publicly available crime, mapping and location data to provide an experimental route-risk indicator. Crime data may be incomplete or delayed, and a higher score does not guarantee safety. Always use your own judgement and follow local safety advice.</span>
     </div>
-    <div class="footer-hint">© Billion Studio · v1.9.0 · tap for info</div>
+    <div class="footer-hint">© Billion Studio · v1.9.1 · tap for info</div>
   </footer>
 </div>
 
@@ -1185,7 +1191,7 @@ function buildRouteCard(r,i,fastest,bestScore,topDuration){
       compareNote=`<div style="margin-top:4px;font-size:10px;color:var(--warn-t);font-weight:500;">⚠ Higher risk (${r.safetyScore} vs ${bestScore}) · ${timeStr}</div>`;
     }
   }
-  return `<div class="rc ${i===0?'on':''}" onclick="highlightRoute(${i})" id="rc-${i}"><div class="rc-h"><span class="rc-label">${label}</span><span class="rc-score">${r.safetyScore}/100</span></div><div class="rc-stats"><div><div class="rc-v">${fD(r.distance)} mi</div><div class="rc-l">Distance</div></div><div><div class="rc-v">${fT(r.duration)}</div><div class="rc-l">Walking</div></div><div><div class="rc-v">${r.crimeCount}</div><div class="rc-l">Crimes</div></div><div><div class="rc-v">${r.safetyScore}</div><div class="rc-l">Risk Score</div></div></div>${timeLabel}${compareNote}${warn}${residentialNote}${absoluteRiskNote}<div style="margin-top:6px;text-align:center;"><button onclick="event.stopPropagation();openModal('why',${i})" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 14px;font-size:11px;font-weight:600;color:var(--safe-t);cursor:pointer;font-family:inherit;">Why this route?</button></div></div>`;
+  return `<div class="rc ${i===0?'on':''}" onclick="highlightRoute(${i})" id="rc-${i}"><div class="rc-body"><div class="rc-h"><span class="rc-label">${label}</span><span class="rc-score">${r.safetyScore}/100</span></div><div class="rc-stats"><div><div class="rc-v">${fD(r.distance)} mi</div><div class="rc-l">Distance</div></div><div><div class="rc-v">${fT(r.duration)}</div><div class="rc-l">Walking</div></div><div><div class="rc-v">${r.crimeCount}</div><div class="rc-l">Crimes</div></div><div><div class="rc-v">${r.safetyScore}</div><div class="rc-l">Risk Score</div></div></div>${timeLabel}${compareNote}${warn}${residentialNote}${absoluteRiskNote}</div><div class="rc-why"><button onclick="event.stopPropagation();openModal('why',${i})" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 14px;font-size:11px;font-weight:600;color:var(--safe-t);cursor:pointer;font-family:inherit;">Why this route?</button></div></div>`;
 }
 
 // ═══ AFTER DARK COMPARISON ═══
