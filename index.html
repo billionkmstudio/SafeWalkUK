@@ -1113,21 +1113,22 @@ function scoreRoute(r,cr){const co=r.geometry.coordinates;const timeMult=getTime
 
 // Main
 async function findRoute(){const fq=document.getElementById('fromInput').value.trim(),tq=document.getElementById('toInput').value.trim();if(!fq||!tq)return;document.getElementById('goBtn').disabled=true;showS('Finding route...');
-  if(typeof gtag==='function')gtag('event','route_search',{from:fq,to:tq});
+  if(typeof gtag==='function')gtag('event','route_search',{hour:selectedHour});
 try{const[f,t]=await Promise.all([geocode(fq,acS.from),geocode(tq,acS.to)]);
   lastFrom=f;lastTo=t;
   // Check straight-line distance first
   const directDist=hav(f.lat,f.lng,t.lat,t.lng);
-  if(directDist>16000){showS(`Too far to walk (${(directDist/1609).toFixed(0)} mi straight line). SafeWalk is designed for journeys under 10 miles. 距離太遠，SafeWalk 適用於 10 英里以內嘅步行路線。`,1);document.getElementById('goBtn').disabled=false;return;}
+  if(directDist>16000){if(typeof gtag==='function')gtag('event','route_failed',{reason:'too_far'});showS(`Too far to walk (${(directDist/1609).toFixed(0)} mi straight line). SafeWalk is designed for journeys under 10 miles. 距離太遠，SafeWalk 適用於 10 英里以內嘅步行路線。`,1);document.getElementById('goBtn').disabled=false;return;}
   showS('Finding walking route...');routes=await getRoutes(f,t);
   // Check actual route distance
   const shortest=Math.min(...routes.map(r=>r.distance));
-  if(shortest>16000){showS(`Route too long (${fD(shortest)} mi). SafeWalk is for walks under 10 miles. Try a closer destination. 路線太長，請試近啲嘅目的地。`,1);document.getElementById('goBtn').disabled=false;return;}
+  if(shortest>16000){if(typeof gtag==='function')gtag('event','route_failed',{reason:'too_long'});showS(`Route too long (${fD(shortest)} mi). SafeWalk is for walks under 10 miles. Try a closer destination. 路線太長，請試近啲嘅目的地。`,1);document.getElementById('goBtn').disabled=false;return;}
   const ac=routes.flatMap(r=>r.geometry.coordinates);
   showS('Fetching crime data & safe spaces...');
   const[crimeResult,]=await Promise.all([fetchCrimes(ac),fetchPOI(ac),fetchCommunityReports()]);
   crimeData=crimeResult;
   showS('Scoring safety...');routes.forEach(r=>scoreRoute(r,crimeData));routes.sort((a,b)=>b.safetyScore-a.safetyScore);clearMap();displayRoutes(f,t);showPOIMarkers();selR=0;highlightRoute(0);hideS();showShareBar();
+  if(typeof gtag==='function')gtag('event','route_found',{route_count:routes.length,best_score:routes[0].safetyScore,distance_mi:+fD(routes[0].distance)});
   recordRecentRoute(f,t);
   // Map is the main event: collapse the intro banner + full search form into a compact
   // summary, and default the route-card sheet to its collapsed (one-line score summary)
@@ -1137,7 +1138,7 @@ try{const[f,t]=await Promise.all([geocode(fq,acS.from),geocode(tq,acS.to)]);
   document.getElementById('mainFooter').classList.add('collapsed');document.getElementById('timeBar').classList.add('collapsed');switchTab('map');
   // Note: highlightRoute(0) above already frames the map on the selected route
   // (not the union of every candidate) — see highlightRoute() for why.
-  }catch(e){showS('Error: '+e.message,1);console.error(e);}finally{document.getElementById('goBtn').disabled=false;}}
+  }catch(e){if(typeof gtag==='function')gtag('event','route_failed',{reason:'error'});showS('Error: '+e.message,1);console.error(e);}finally{document.getElementById('goBtn').disabled=false;}}
 
 function fD(m){return(m/1609.34).toFixed(1);}
 function fT(s){const h=Math.floor(s/3600),m=Math.round((s%3600)/60);return h>0?`${h}h ${m}min`:`${m} min`;}
