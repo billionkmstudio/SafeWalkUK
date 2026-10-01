@@ -154,30 +154,32 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     opts = opts || {}; opts.signal = c.signal;
     return fetch(url, opts).finally(function () { clearTimeout(id); });
   }
-  function fetchOSM() {
-    var bb = south.toFixed(5) + ',' + west.toFixed(5) + ',' + north.toFixed(5) + ',' + east.toFixed(5);
-    var q = '[out:json][timeout:30];(' +
-      'way["building"](' + bb + ');way["highway"](' + bb + ');' +
-      'way["leisure"~"park|garden|pitch|nature_reserve|recreation_ground"](' + bb + ');' +
-      'way["landuse"~"grass|recreation_ground|forest|meadow|village_green"](' + bb + ');' +
-      'way["natural"~"wood|water"](' + bb + ');way["amenity"="parking"](' + bb + ');' +
-      'node["highway"="street_lamp"](' + bb + ');node["man_made"="surveillance"](' + bb + ');' +
-      'node["amenity"~"pub|bar|fuel|restaurant|fast_food|pharmacy"](' + bb + ');node["shop"~"convenience|supermarket"](' + bb + ');' +
-      ');out geom tags;';
-    var key = 'sw3d_' + bb, tries = 0, errs = [], maxTries = OVERPASS.length + 3;
+  var osmErrs = [];
+  function fetchPart(q, key) {
+    var tries = 0, maxTries = OVERPASS.length + 2;
     try { var cached = sessionStorage.getItem(key); if (cached) return Promise.resolve(JSON.parse(cached)); } catch (e) {}
     function next() {
-      if (tries >= maxTries) { window.__osmErrs = errs; return Promise.reject(new Error('osm')); }
-      var srv = OVERPASS[tries % OVERPASS.length], cur = srv === 'api/overpass' ? 'proxy' : srv.split('/')[2], wait = tries > 0 && tries % OVERPASS.length === 0 ? 1500 : 0;
+      if (tries >= maxTries) return Promise.reject(new Error('osm'));
+      var srv = OVERPASS[tries % OVERPASS.length], cur = srv === 'api/overpass' ? 'proxy' : srv.split('/')[2], wait = tries > 1 ? 1200 : 0;
       tries++;
       return new Promise(function (r) { setTimeout(r, wait); }).then(function () {
         if (srv === 'api/overpass') return timeoutFetch(srv + '?data=' + encodeURIComponent(q), null, 40000);
         return timeoutFetch(srv, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 30000);
-      }).then(function (r) { if (!r.ok) throw new Error('osm ' + r.status); return r.json(); })
-        .then(function (j) { if (!j || !j.elements) throw new Error('osm empty'); try { sessionStorage.setItem(key, JSON.stringify(j)); } catch (e) {} return j; })
-        .catch(function (e) { errs.push(cur + ': ' + (e && e.name === 'AbortError' ? 'timeout' : (e && e.message) || 'blocked')); return next(); });
+      }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (j) { if (!j || !j.elements) throw new Error('empty'); try { sessionStorage.setItem(key, JSON.stringify(j)); } catch (e) {} return j; })
+        .catch(function (e) { osmErrs.push(cur + ': ' + (e && e.name === 'AbortError' ? 'timeout' : (e && e.message) || 'blocked')); return next(); });
     }
     return next();
+  }
+  function fetchOSM() {
+    var bb = south.toFixed(5) + ',' + west.toFixed(5) + ',' + north.toFixed(5) + ',' + east.toFixed(5), H = '[out:json][timeout:25];';
+    // three smaller queries run in parallel: each is faster, cacheable on its own, and fits the server time limit
+    var qB = H + 'way["building"](' + bb + ');out geom;';
+    var qR = H + '(way["highway"](' + bb + ');way["leisure"~"park|garden|pitch|nature_reserve|recreation_ground"](' + bb + ');way["landuse"~"grass|recreation_ground|forest|meadow|village_green"](' + bb + ');way["natural"~"wood|water"](' + bb + ');way["amenity"="parking"](' + bb + '););out geom;';
+    var qN = H + '(node["highway"="street_lamp"](' + bb + ');node["man_made"="surveillance"](' + bb + ');node["amenity"~"pub|bar|fuel|restaurant|fast_food|pharmacy"](' + bb + ');node["shop"~"convenience|supermarket"](' + bb + '););out;';
+    return Promise.all([fetchPart(qB, 'sw3d_b_' + bb), fetchPart(qR, 'sw3d_r_' + bb), fetchPart(qN, 'sw3d_n_' + bb)]).then(function (p) {
+      return { elements: p[0].elements.concat(p[1].elements, p[2].elements) };
+    });
   }
   function fetchCrimes() {
     var now = new Date(), months = [2, 3, 4].map(function (k) { var d = new Date(now.getFullYear(), now.getMonth() - k, 1); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); });
@@ -257,7 +259,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     loadEl.textContent = '計算燈光、CCTV 同視線…';
     setTimeout(boot, 30);
   }).catch(function () {
-    fail('未能載入地圖數據（build c3）。' + (window.__osmErrs ? '原因：' + window.__osmErrs.join(' | ') : '') + ' 請等一兩分鐘後重新整理。');
+    fail('未能載入地圖數據（build c4）。' + (osmErrs.length ? '原因：' + osmErrs.slice(-6).join(' | ') : '') + ' 請等一兩分鐘後重新整理。');
   });
 
   function boot() {
