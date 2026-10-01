@@ -1635,7 +1635,7 @@ document.getElementById('fromInput').addEventListener('keydown',e=>{if(e.key==='
 function open3D(){
   if(!lastFrom||!lastTo)return;
   if(typeof gtag==='function')gtag('event','open_3d');
-  location.href='3d.html?from='+lastFrom.lat+','+lastFrom.lng+'&to='+lastTo.lat+','+lastTo.lng;
+  location.href='3d.html?from='+lastFrom.lat+','+lastFrom.lng+'&to='+lastTo.lat+','+lastTo.lng+'&fn='+encodeURIComponent((lastFrom.name||'').split(',')[0])+'&tn='+encodeURIComponent((lastTo.name||'').split(',')[0]);
 }
 function getShareURL(){
   const from=encodeURIComponent(document.getElementById('fromInput').value);

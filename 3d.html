@@ -69,6 +69,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .card.collapsed .grid, .card.collapsed .verdict { display: none; }
 
 .loading, .fail { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; padding: 12px 16px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); text-align: center; width: max-content; max-width: 90%; }
+#compass { position: absolute; top: 56px; right: 16px; width: 38px; height: 38px; border-radius: 50%; background: var(--panel); border: 1px solid var(--line); display: grid; place-items: center; pointer-events: none; font-size: 0.6rem; color: var(--muted); } #compass i { position: absolute; left: 50%; top: 4px; width: 0; height: 0; margin-left: -4px; border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 10px solid var(--risk); } #compass span { margin-top: 12px; }
 .back { font-size: 0.75rem; color: var(--accent); text-decoration: none; margin-left: auto; pointer-events: auto; }
 </style>
 
@@ -95,6 +96,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
       <button class="chip" type="button" id="t-start" aria-pressed="false">設起點</button>
       <button class="chip" type="button" id="t-end" aria-pressed="false">設終點</button>
       <button class="chip" type="button" id="t-view" aria-pressed="false">睇視線</button>
+      <button class="chip" type="button" id="t-names" aria-pressed="true">地名</button>
     </div>
     <div class="slider">
       <label for="k">安全優先</label>
@@ -199,7 +201,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   var RESI = { house: 1, detached: 1, semidetached_house: 1, terrace: 1, bungalow: 1, residential: 1, garage: 1, garages: 1, shed: 1, roof: 1 };
 
   function buildData(osm, crimes) {
-    var D = { buildings: [], roads: [], areas: [], lamps: [], cams: [], incidents: [], stats: {} };
+    var D = { buildings: [], roads: [], areas: [], pois: [], lamps: [], cams: [], incidents: [], stats: {} };
     var mapped = 0, litWays = 0, litLen = 0;
     function ring(g) { var p = g.map(function (q) { return [toX(q.lon), toZ(q.lat)]; }); if (p.length > 1 && p[0][0] === p[p.length - 1][0] && p[0][1] === p[p.length - 1][1]) p.pop(); return p; }
     osm.elements.forEach(function (el) {
@@ -208,13 +210,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
         if (t.building) {
           var p = ring(el.geometry); if (p.length < 3) return;
           var h = parseFloat(t.height); if (!isFinite(h)) { var lv = parseFloat(t['building:levels']); h = isFinite(lv) ? lv * 3.1 + 1 : (RESI[t.building] ? 7 : 9); }
-          D.buildings.push({ pts: p, h: Math.max(3, Math.min(120, h)) });
+          D.buildings.push({ pts: p, h: Math.max(3, Math.min(120, h)), name: t.name });
         } else if (t.highway) {
           if (NOWALK[t.highway] || t.foot === 'no' || t.access === 'private' || t.access === 'no') { D.roads.push({ pts: el.geometry.map(function (q) { return [toX(q.lon), toZ(q.lat)]; }), rad: (ROAD_W[t.highway] || 5) / 2, walk: false }); return; }
           if (t.highway === 'corridor' || t.indoor === 'yes') return;
           if ((t.area === 'yes' || t.highway === 'pedestrian') && el.geometry.length >= 4 && el.geometry[0].lat === el.geometry[el.geometry.length - 1].lat && el.geometry[0].lon === el.geometry[el.geometry.length - 1].lon) { D.areas.push({ pts: ring(el.geometry), kind: 'park', walk: true }); if (t.area === 'yes') return; }
           var w = ROAD_W[t.highway] || 5, pts = el.geometry.map(function (q) { return [toX(q.lon), toZ(q.lat)]; });
-          D.roads.push({ pts: pts, w: w, rad: w / 2 + 2.5, walk: true, hw: t.highway });
+          D.roads.push({ pts: pts, w: w, rad: w / 2 + 2.5, walk: true, hw: t.highway, name: t.name });
           if (t.lit === 'yes' || t.lit === '24/7' || t.lit === 'automatic') {
             litWays++;
             var acc = 12;
@@ -230,7 +232,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
           else if (t.leisure === 'garden' || t.leisure === 'pitch' || t.landuse === 'grass' || t.landuse === 'meadow' || t.landuse === 'forest' || t.natural === 'wood') kind = 'green';
           else if (t.natural === 'water') kind = 'water';
           else if (t.amenity === 'parking') { kind = 'park'; walk = true; }
-          if (kind) D.areas.push({ pts: ring(el.geometry), kind: kind, walk: walk });
+          if (kind) D.areas.push({ pts: ring(el.geometry), kind: kind, walk: walk, name: t.name });
         }
       } else if (el.type === 'node' && isFinite(el.lat)) {
         var x = toX(el.lon), z = toZ(el.lat);
@@ -240,7 +242,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
           var dirv = parseFloat(t['camera:direction'] || t.direction), dome = t['camera:type'] === 'dome' || t['camera:type'] === 'panning';
           if (isFinite(dirv) && !dome) D.cams.push({ x: x, z: z, dir: dirv - 90, fov: 90, range: 40 });
           else D.cams.push({ x: x, z: z, dir: 0, fov: 360, range: 25 });
-        } else if (t.amenity || t.shop) D.lamps.push({ x: x, z: z, p: 0.6, r: 12, kind: 'shop' });
+        } else if (t.amenity || t.shop) { D.lamps.push({ x: x, z: z, p: 0.6, r: 12, kind: 'shop' }); if (t.name) D.pois.push({ x: x, z: z, name: t.name }); }
       }
     });
     var nc = 0;
@@ -259,7 +261,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     loadEl.textContent = '計算燈光、CCTV 同視線…';
     setTimeout(boot, 30);
   }).catch(function () {
-    fail('未能載入地圖數據（build c4）。' + (osmErrs.length ? '原因：' + osmErrs.slice(-6).join(' | ') : '') + ' 請等一兩分鐘後重新整理。');
+    fail('未能載入地圖數據（build c5）。' + (osmErrs.length ? '原因：' + osmErrs.slice(-6).join(' | ') : '') + ' 請等一兩分鐘後重新整理。');
   });
 
   function boot() {
@@ -729,14 +731,54 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     var e = new THREE.Mesh(new THREE.SphereGeometry(rad, 8, 6), mat); e.position.set(pts[pts.length - 1][0], y, pts[pts.length - 1][1]); routeGroup.add(e);
   }
   var startPt = [toX(A[1]), toZ(A[0])], endPt = [toX(B[1]), toZ(B[0])];
+  var SZ = Math.hypot(endPt[0] - startPt[0], endPt[1] - startPt[1]) * 1.1 + 200;
+  function badge(letter, color) {
+    var c = document.createElement('canvas'); c.width = c.height = 128;
+    var g = c.getContext('2d');
+    g.beginPath(); g.arc(64, 64, 58, 0, Math.PI * 2); g.fillStyle = color; g.fill();
+    g.lineWidth = 8; g.strokeStyle = '#ffffff'; g.stroke();
+    g.fillStyle = '#04140d'; g.font = '700 74px "Sora", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(letter, 64, 70);
+    var s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));
+    s.renderOrder = 14; return s;
+  }
+  var FN = (params.get('fn') || '').slice(0, 28), TN = (params.get('tn') || '').slice(0, 28);
   function drawPins() {
     clearGroup(pinGroup);
-    [[startPt, 0x3ee6a8, '起點'], [endPt, 0x5aa8ff, '終點']].forEach(function (p) {
-      var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 9, 6), new THREE.MeshBasicMaterial({ color: p[1] })); pole.position.set(p[0][0], 4.5, p[0][1]); pinGroup.add(pole);
-      var ball = new THREE.Mesh(new THREE.SphereGeometry(1.6, 12, 10), new THREE.MeshBasicMaterial({ color: p[1] })); ball.position.set(p[0][0], 9.5, p[0][1]); pinGroup.add(ball);
-      var lb = label(p[2], p[0][0], 16, p[0][1], 22, '#' + p[1].toString(16)); scene.remove(lb); pinGroup.add(lb);
+    [[startPt, 0x3ee6a8, '#3ee6a8', 'A', FN], [endPt, 0x5aa8ff, '#5aa8ff', 'B', TN]].forEach(function (p) {
+      var h = Math.max(36, SZ * 0.1);
+      var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, h, 6), new THREE.MeshBasicMaterial({ color: p[1] })); pole.position.set(p[0][0], h / 2, p[0][1]); pinGroup.add(pole);
+      var foot = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 10), new THREE.MeshBasicMaterial({ color: p[1] })); foot.position.set(p[0][0], 2.4, p[0][1]); pinGroup.add(foot);
+      var b = badge(p[3], p[2]); b.position.set(p[0][0], h + SZ * 0.03, p[0][1]); b.scale.setScalar(SZ * 0.06); pinGroup.add(b);
+      if (p[4]) { var lb = label(p[4], p[0][0], h + SZ * 0.085, p[0][1], SZ * 0.2, p[2]); scene.remove(lb); lb.renderOrder = 15; pinGroup.add(lb); }
     });
   }
+
+  // place names (from OSM): main streets, named buildings, shops/pubs, parks. Kept few so the view stays readable.
+  var namesGroup = new THREE.Group(); scene.add(namesGroup);
+  function addNames() {
+    function put(text, x, y, z, scale, color) { var lb = label(text.slice(0, 26), x, y, z, scale, color); scene.remove(lb); namesGroup.add(lb); }
+    var streets = {};
+    DATA.roads.forEach(function (r) {
+      if (!r.name || !r.walk || r.hw === 'footway' || r.hw === 'path' || r.hw === 'steps' || r.hw === 'cycleway' || r.hw === 'service') return;
+      var len = 0, i; for (i = 1; i < r.pts.length; i++) len += Math.hypot(r.pts[i][0] - r.pts[i - 1][0], r.pts[i][1] - r.pts[i - 1][1]);
+      if (len < 35) return; var s = streets[r.name]; if (!s || len > s.len) streets[r.name] = { len: len, r: r };
+    });
+    Object.keys(streets).map(function (k) { return [k, streets[k]]; }).sort(function (a, b) { return b[1].len - a[1].len; }).slice(0, 16).forEach(function (e) {
+      var pts = e[1].r.pts, half = e[1].len / 2, acc = 0, x = pts[0][0], z = pts[0][1];
+      for (var i = 1; i < pts.length; i++) { var sl = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); if (acc + sl >= half) { var t = (half - acc) / (sl || 1); x = pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t; z = pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t; break; } acc += sl; }
+      put(e[0], x, 4, z, SZ * 0.15, 'rgba(232,237,245,0.35)');
+    });
+    var bl = DATA.buildings.map(function (b, i) { return [i, (Bx1[i] - Bx0[i]) * (Bz1[i] - Bz0[i])]; }).filter(function (q) { return DATA.buildings[q[0]].name; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 10);
+    bl.forEach(function (q) { var b = DATA.buildings[q[0]]; put(b.name, (Bx0[q[0]] + Bx1[q[0]]) / 2, b.h + 5, (Bz0[q[0]] + Bz1[q[0]]) / 2, SZ * 0.17, '#ffd98a'); });
+    var mx = (startPt[0] + endPt[0]) / 2, mz = (startPt[1] + endPt[1]) / 2, used = {};
+    DATA.pois.filter(function (p) { return p.name; }).sort(function (a, b) { return Math.hypot(a.x - mx, a.z - mz) - Math.hypot(b.x - mx, b.z - mz); }).forEach(function (p) {
+      if (used[p.name] || Object.keys(used).length >= 12) return; used[p.name] = 1; put(p.name, p.x, 9, p.z, SZ * 0.13, '#40e8e8');
+    });
+    DATA.areas.filter(function (a) { return a.name && a.kind === 'green'; }).slice(0, 4).forEach(function (a) {
+      var x = 0, z = 0; a.pts.forEach(function (p) { x += p[0]; z += p[1]; }); put(a.name, x / a.pts.length, 6, z / a.pts.length, SZ * 0.16, '#3d8f5a');
+    });
+  }
+
   var gridEl = document.getElementById('grid'), verdictEl = document.getElementById('verdict');
   var lastResult = null;
   function recompute() {
@@ -791,7 +833,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   /* =====================================================================
      4. CAMERA + INPUT
      ===================================================================== */
-  var SZ = Math.hypot(endPt[0] - startPt[0], endPt[1] - startPt[1]) * 1.1 + 200, orb = { theta: 0.0, phi: 0.95, r: SZ * 1.2, tx: (startPt[0] + endPt[0]) / 2, ty: 0, tz: (startPt[1] + endPt[1]) / 2 + SZ * 0.12 };
+  var orb = { theta: 0.0, phi: 0.95, r: SZ * 1.2, tx: (startPt[0] + endPt[0]) / 2, ty: 0, tz: (startPt[1] + endPt[1]) / 2 + SZ * 0.12 };
   var userZoom = false, mode = null;
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
   function placeCamera() {
@@ -892,7 +934,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   setTimeout(function () {
     var t0 = performance.now();
     computeFields();
-    setLayer('risk'); drawPins(); recompute();
+    setLayer('risk'); drawPins(); recompute(); try { addNames(); } catch (e) { console.error(e); }
+    var tn = document.getElementById('t-names'); tn.addEventListener('click', function () { var on = tn.getAttribute('aria-pressed') !== 'true'; tn.setAttribute('aria-pressed', on); namesGroup.visible = on; });
     window.__swReady = true; window.__swMs = Math.round(performance.now() - t0);
     var st = DATA.stats, warn = (st.lampsMapped + st.litM / 28) < Math.max(8, DW * DD / 6000) ? ' ⚠ 呢區 OSM 街燈資料偏少，燈光分析可能偏保守。' : '';
     document.getElementById('datanote').textContent = 'OpenStreetMap：樓宇 ' + st.bld + ' · 街燈 ' + st.lampsMapped + '（另有 ' + Math.round(st.litM) + ' m 標記 lit 路段）· CCTV ' + st.cams + '。罪案：' + (st.crimesOk ? 'police.uk 近 3 個月 ' + st.crimes + ' 宗（位置為大約）' : '暫時載入唔到') + '。實驗性指標，唔代表人身安全保證。' + warn;
