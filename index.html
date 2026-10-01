@@ -409,6 +409,7 @@ html{scroll-padding-top:env(safe-area-inset-top,0);}
     <button class="share-btn" onclick="shareRoute('copy')">📋 Copy Link</button>
     <button class="share-btn" onclick="shareRoute('whatsapp')">💬 WhatsApp</button>
     <button class="share-btn" onclick="shareRoute('native')">📤 Share</button>
+    <button class="share-btn" onclick="open3D()">🧊 3D view (beta)</button>
   </div>
   <div id="companionWrap" style="padding:0 16px;display:none;">
     <button class="companion-btn" onclick="startCompanion()">🚶‍♀️ Start Journey & Share Live Location</button>
@@ -1631,6 +1632,11 @@ document.getElementById('toInput').addEventListener('keydown',e=>{if(e.key==='En
 document.getElementById('fromInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!document.querySelector('.ac-list.show'))findRoute();});
 
 // ═══ SHARE ROUTE ═══
+function open3D(){
+  if(!lastFrom||!lastTo)return;
+  if(typeof gtag==='function')gtag('event','open_3d');
+  location.href='3d.html?from='+lastFrom.lat+','+lastFrom.lng+'&to='+lastTo.lat+','+lastTo.lng;
+}
 function getShareURL(){
   const from=encodeURIComponent(document.getElementById('fromInput').value);
   const to=encodeURIComponent(document.getElementById('toInput').value);

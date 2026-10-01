@@ -1,0 +1,876 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex">
+<title>SafeWalk UK · 3D 視線</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* Layout: full-bleed night map. Top: name + layer chips + legend. Bottom dock: pick tools, safety slider, route comparison card.
+   One committed night look: ink-navy ground, mint = safest route, amber = fastest route, red = risk. */
+:root {
+  --bg: #0a0f1a;
+  --ink: #e8edf5;
+  --muted: #93a0b5;
+  --line: rgba(232, 237, 245, 0.16);
+  --panel: rgba(10, 15, 26, 0.84);
+  --safe: #3ee6a8;
+  --fast: #ff9b3d;
+  --risk: #ff4d5e;
+  --accent: #3ee6a8;
+  --accent-ink: #04140d;
+  --font-display: 'Sora', 'Noto Sans TC', system-ui, sans-serif;
+  --font-body: 'Noto Sans TC', system-ui, -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  color-scheme: dark;
+}
+html { box-sizing: border-box; height: 100%; }
+*, *::before, *::after { box-sizing: inherit; }
+body { height: 100%; background: var(--bg); color: var(--ink); font: 400 14px/1.5 var(--font-body); overflow: hidden; }
+#app { position: relative; height: 100%; overflow: hidden; }
+#stage { position: absolute; inset: 0; outline: none; }
+#stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+
+.top { position: absolute; top: 10px; left: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.top > * { pointer-events: auto; }
+.brand { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; pointer-events: none; }
+.name { font: 600 1.25rem/1.1 var(--font-display); letter-spacing: 0.02em; }
+.sub { font-size: 0.75rem; color: var(--muted); letter-spacing: 0.08em; }
+.layers { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; max-width: 100%; }
+.layers::-webkit-scrollbar { display: none; }
+.chip {
+  flex: none; font: 500 0.8125rem/1 var(--font-body); min-height: 38px; padding: 0 13px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.chip:hover:not([aria-pressed="true"]) { border-color: var(--muted); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.legend { display: flex; align-items: center; gap: 8px; font-size: 0.6875rem; color: var(--muted); pointer-events: none; }
+.legend i { display: block; width: 110px; height: 8px; border-radius: 4px; border: 1px solid var(--line); }
+
+.dock { position: absolute; left: 16px; right: 16px; bottom: 12px; display: flex; flex-direction: column; gap: 8px; pointer-events: none; max-width: 34rem; }
+.dock > * { pointer-events: auto; }
+.viewinfo { margin: 0; padding: 7px 12px; border-radius: 12px; background: var(--panel); border: 1px solid #b07bff; font-size: 0.78rem; color: var(--ink); }
+.tools { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.slider { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); font-size: 0.8125rem; }
+.slider label { flex: none; color: var(--muted); }
+.slider input { flex: 1; min-width: 0; accent-color: var(--safe); }
+.slider output { flex: none; width: 2.2em; text-align: right; font-variant-numeric: tabular-nums; color: var(--safe); }
+
+.card { padding: 10px 12px 12px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 700; }
+.card-head button { font: 500 0.75rem/1 var(--font-body); min-height: 32px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }
+.grid { display: grid; grid-template-columns: 5.2em 1fr 1fr; gap: 5px 10px; margin-top: 8px; font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+.grid .h { font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.grid .h i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.grid .l { color: var(--muted); }
+.grid .good { color: var(--safe); font-weight: 700; }
+.verdict { margin: 8px 0 0; font-size: 0.8125rem; }
+.note { margin: 6px 0 0; font-size: 0.6875rem; color: var(--muted); }
+.card.collapsed .grid, .card.collapsed .verdict { display: none; }
+
+.loading, .fail { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; padding: 12px 16px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); text-align: center; width: max-content; max-width: 90%; }
+.back { font-size: 0.75rem; color: var(--accent); text-decoration: none; margin-left: auto; pointer-events: auto; }
+</style>
+
+</head><body>
+<main id="app">
+  <div id="stage" tabindex="0" aria-label="夜間街區 3D 地圖"></div>
+
+  <header class="top">
+    <div class="brand"><span class="name">SafeWalk UK</span><span class="sub">夜歸安全透視 · 3D 視線（實驗）</span><a class="back" href="./">← 返回路線</a></div>
+    <nav class="layers" id="layers" aria-label="地圖圖層">
+      <button class="chip" type="button" data-layer="risk" aria-pressed="true">綜合風險</button>
+      <button class="chip" type="button" data-layer="light" aria-pressed="false">燈光</button>
+      <button class="chip" type="button" data-layer="cctv" aria-pressed="false">CCTV</button>
+      <button class="chip" type="button" data-layer="sight" aria-pressed="false">視線死角</button>
+      <button class="chip" type="button" data-layer="crime" aria-pressed="false">罪案</button>
+      <button class="chip" type="button" data-layer="none" aria-pressed="false">純 3D</button>
+    </nav>
+    <div class="legend" id="legend"><span id="lg-lo"></span><i id="lg-bar"></i><span id="lg-hi"></span></div>
+  </header>
+
+  <section class="dock">
+    <p class="viewinfo" id="viewinfo" hidden></p>
+    <div class="tools" role="group" aria-label="點選地面">
+      <button class="chip" type="button" id="t-start" aria-pressed="false">設起點</button>
+      <button class="chip" type="button" id="t-end" aria-pressed="false">設終點</button>
+      <button class="chip" type="button" id="t-view" aria-pressed="false">睇視線</button>
+    </div>
+    <div class="slider">
+      <label for="k">安全優先</label>
+      <input id="k" type="range" min="0" max="10" step="1" value="6">
+      <output id="k-out" for="k">6</output>
+    </div>
+    <section class="card" id="card">
+      <div class="card-head"><span>路線比較</span><button type="button" id="card-toggle" aria-expanded="true">收起</button></div>
+      <div class="grid" id="grid"></div>
+      <p class="verdict" id="verdict"></p>
+      <p class="note" id="datanote"></p>
+    </section>
+  </section>
+
+  <p id="loading" class="loading">載入數據中…</p>
+  <p id="fail" class="fail" hidden></p>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+  var CELL = 2, DW = 240, DD = 190, GW = 120, GD = 95, NCELL = GW * GD, DATA = null;
+  var stage = document.getElementById('stage');
+  var loadEl = document.getElementById('loading');
+  var failEl = document.getElementById('fail');
+  function fail(msg) { loadEl.hidden = true; failEl.textContent = msg; failEl.hidden = false; }
+  if (typeof THREE === 'undefined') { fail('3D 引擎載入失敗，請檢查網絡後重新整理。'); return; }
+  var renderer;
+  try { renderer = new THREE.WebGLRenderer({ antialias: true }); }
+  catch (e) { fail('呢部裝置暫時未能顯示 3D 場景（WebGL 未啟用）。'); return; }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  stage.appendChild(renderer.domElement);
+  /* =====================================================================
+     1. DATA  (real: OpenStreetMap via Overpass + data.police.uk)
+        Local metres: x = east, z = south, origin = north-west corner of the
+        route's bounding box (+ padding). Everything below only reads DATA.
+        buildings: {pts:[[x,z]...], h}   roads: {pts, rad, walk}
+        areas: {pts, kind, walk}         lamps: {x,z,p,r,kind,broken,virt}
+        cams: {x,z,dir,fov,range}        incidents: [x, z, weight]
+     ===================================================================== */
+  var params = new URLSearchParams(location.search);
+  function parseLL(s, d) { if (s) { var p = s.split(','), a = parseFloat(p[0]), b = parseFloat(p[1]); if (isFinite(a) && isFinite(b)) return [a, b]; } return d; }
+  var A = parseLL(params.get('from'), [51.2370, -0.5743]), B = parseLL(params.get('to'), [51.2430, -0.5700]);
+  var PAD = 140, latMid = (A[0] + B[0]) / 2, mLat = 110574, mLng = 111320 * Math.cos(latMid * Math.PI / 180);
+  if (Math.max(Math.abs(B[1] - A[1]) * mLng, Math.abs(B[0] - A[0]) * mLat) > 1200) { fail('起點同終點相距超過 1.2 公里。3D 視線模組暫時只支援短程路線（例如夜歸最後一段）。'); return; }
+  var south = Math.min(A[0], B[0]) - PAD / mLat, north = Math.max(A[0], B[0]) + PAD / mLat;
+  var west = Math.min(A[1], B[1]) - PAD / mLng, east = Math.max(A[1], B[1]) + PAD / mLng;
+  DW = Math.round((east - west) * mLng); DD = Math.round((north - south) * mLat);
+  CELL = Math.max(2, Math.ceil(Math.max(DW, DD) / 330)); GW = Math.ceil(DW / CELL); GD = Math.ceil(DD / CELL); NCELL = GW * GD;
+  function toX(lng) { return (lng - west) * mLng; }
+  function toZ(lat) { return (north - lat) * mLat; }
+
+  var OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  function timeoutFetch(url, opts, ms) {
+    var c = new AbortController(), id = setTimeout(function () { c.abort(); }, ms);
+    opts = opts || {}; opts.signal = c.signal;
+    return fetch(url, opts).finally(function () { clearTimeout(id); });
+  }
+  function fetchOSM() {
+    var bb = south.toFixed(5) + ',' + west.toFixed(5) + ',' + north.toFixed(5) + ',' + east.toFixed(5);
+    var q = '[out:json][timeout:30];(' +
+      'way["building"](' + bb + ');way["highway"](' + bb + ');' +
+      'way["leisure"~"park|garden|pitch|nature_reserve|recreation_ground"](' + bb + ');' +
+      'way["landuse"~"grass|recreation_ground|forest|meadow|village_green"](' + bb + ');' +
+      'way["natural"~"wood|water"](' + bb + ');way["amenity"="parking"](' + bb + ');' +
+      'node["highway"="street_lamp"](' + bb + ');node["man_made"="surveillance"](' + bb + ');' +
+      'node["amenity"~"pub|bar|fuel|restaurant|fast_food|pharmacy"](' + bb + ');node["shop"~"convenience|supermarket"](' + bb + ');' +
+      ');out geom tags;';
+    var i = 0;
+    function next() {
+      if (i >= OVERPASS.length) return Promise.reject(new Error('osm'));
+      var srv = OVERPASS[i++];
+      return timeoutFetch(srv, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 35000)
+        .then(function (r) { if (!r.ok) throw new Error('osm ' + r.status); return r.json(); })
+        .catch(function () { return next(); });
+    }
+    return next();
+  }
+  function fetchCrimes() {
+    var now = new Date(), months = [2, 3, 4].map(function (k) { var d = new Date(now.getFullYear(), now.getMonth() - k, 1); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); });
+    var pts = [A, B, [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2]], reqs = [];
+    pts.forEach(function (p) { months.forEach(function (m) {
+      reqs.push(timeoutFetch('https://data.police.uk/api/crimes-street/all-crime?lat=' + p[0] + '&lng=' + p[1] + '&date=' + m, null, 12000).then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return null; }));
+    }); });
+    return Promise.all(reqs).then(function (all) {
+      var seen = {}, out = [], okCount = 0;
+      all.forEach(function (list) { if (!list) return; okCount++; list.forEach(function (c) { if (!seen[c.id]) { seen[c.id] = 1; out.push(c); } }); });
+      return { list: out, ok: okCount > 0 };
+    });
+  }
+  var CRIME_W = { 'violent-crime': 3, 'robbery': 3, 'possession-of-weapons': 3, 'burglary': 2, 'theft-from-the-person': 2, 'public-order': 1.5, 'vehicle-crime': 1.2, 'criminal-damage-arson': 1.2, 'drugs': 1, 'anti-social-behaviour': 1, 'other-theft': 0.8, 'other-crime': 0.8, 'shoplifting': 0.4, 'bicycle-theft': 0.4 };
+  var ROAD_W = { motorway: 12, trunk: 10, primary: 9, secondary: 8, tertiary: 7, unclassified: 6, residential: 6, living_street: 5, service: 3.5, pedestrian: 5, footway: 2.2, path: 2.2, cycleway: 2.4, steps: 2, track: 3, bridleway: 2.2, corridor: 2 };
+  var NOWALK = { motorway: 1, motorway_link: 1, construction: 1, proposed: 1, raceway: 1 };
+  var RESI = { house: 1, detached: 1, semidetached_house: 1, terrace: 1, bungalow: 1, residential: 1, garage: 1, garages: 1, shed: 1, roof: 1 };
+
+  function buildData(osm, crimes) {
+    var D = { buildings: [], roads: [], areas: [], lamps: [], cams: [], incidents: [], stats: {} };
+    var mapped = 0, litWays = 0, litLen = 0;
+    function ring(g) { var p = g.map(function (q) { return [toX(q.lon), toZ(q.lat)]; }); if (p.length > 1 && p[0][0] === p[p.length - 1][0] && p[0][1] === p[p.length - 1][1]) p.pop(); return p; }
+    osm.elements.forEach(function (el) {
+      var t = el.tags || {};
+      if (el.type === 'way' && el.geometry && el.geometry.length > 1) {
+        if (t.building) {
+          var p = ring(el.geometry); if (p.length < 3) return;
+          var h = parseFloat(t.height); if (!isFinite(h)) { var lv = parseFloat(t['building:levels']); h = isFinite(lv) ? lv * 3.1 + 1 : (RESI[t.building] ? 7 : 9); }
+          D.buildings.push({ pts: p, h: Math.max(3, Math.min(120, h)) });
+        } else if (t.highway) {
+          if (NOWALK[t.highway] || t.foot === 'no' || t.access === 'private' || t.access === 'no') { D.roads.push({ pts: el.geometry.map(function (q) { return [toX(q.lon), toZ(q.lat)]; }), rad: (ROAD_W[t.highway] || 5) / 2, walk: false }); return; }
+          var w = ROAD_W[t.highway] || 5, pts = el.geometry.map(function (q) { return [toX(q.lon), toZ(q.lat)]; });
+          D.roads.push({ pts: pts, w: w, rad: w / 2 + 2.5, walk: true, hw: t.highway });
+          if (t.lit === 'yes' || t.lit === '24/7' || t.lit === 'automatic') {
+            litWays++;
+            var acc = 12;
+            for (var i = 1; i < pts.length; i++) {
+              var sl = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]), pos = 0;
+              while (acc <= sl - pos + 0.001) { pos += acc; var f = pos / (sl || 1); D.lamps.push({ x: pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * f, z: pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * f, p: 0.4, r: 22, kind: 'lamp', virt: true }); acc = 28; }
+              acc -= (sl - pos); litLen += sl;
+            }
+          }
+        } else if (el.geometry.length >= 4) {
+          var kind = null, walk = false;
+          if (t.leisure === 'park' || t.leisure === 'recreation_ground' || t.leisure === 'nature_reserve' || t.landuse === 'recreation_ground' || t.landuse === 'village_green') { kind = 'green'; walk = true; }
+          else if (t.leisure === 'garden' || t.leisure === 'pitch' || t.landuse === 'grass' || t.landuse === 'meadow' || t.landuse === 'forest' || t.natural === 'wood') kind = 'green';
+          else if (t.natural === 'water') kind = 'water';
+          else if (t.amenity === 'parking') { kind = 'park'; walk = true; }
+          if (kind) D.areas.push({ pts: ring(el.geometry), kind: kind, walk: walk });
+        }
+      } else if (el.type === 'node' && isFinite(el.lat)) {
+        var x = toX(el.lon), z = toZ(el.lat);
+        if (t.highway === 'street_lamp') { mapped++; D.lamps.push({ x: x, z: z, p: t.disused || t.broken ? 0 : 0.45, r: 22, kind: 'lamp', broken: !!(t.disused || t.broken) }); }
+        else if (t.man_made === 'surveillance') {
+          if (t.surveillance === 'indoor') return;
+          var dirv = parseFloat(t['camera:direction'] || t.direction), dome = t['camera:type'] === 'dome' || t['camera:type'] === 'panning';
+          if (isFinite(dirv) && !dome) D.cams.push({ x: x, z: z, dir: dirv - 90, fov: 90, range: 40 });
+          else D.cams.push({ x: x, z: z, dir: 0, fov: 360, range: 25 });
+        } else if (t.amenity || t.shop) D.lamps.push({ x: x, z: z, p: 0.6, r: 12, kind: 'shop' });
+      }
+    });
+    var nc = 0;
+    crimes.list.forEach(function (c) {
+      var x = toX(+c.location.longitude), z = toZ(+c.location.latitude);
+      if (x < -20 || z < -20 || x > DW + 20 || z > DD + 20) return;
+      D.incidents.push([x, z, CRIME_W[c.category] || 1]); nc++;
+    });
+    D.stats = { bld: D.buildings.length, lampsMapped: mapped, litWays: litWays, litM: Math.round(litLen), cams: D.cams.length, crimes: nc, crimesOk: crimes.ok };
+    return D;
+  }
+
+  loadEl.textContent = '載入 OpenStreetMap 樓宇、街燈、CCTV 同 police.uk 罪案數據…';
+  Promise.all([fetchOSM(), fetchCrimes()]).then(function (res) {
+    DATA = buildData(res[0], res[1]);
+    loadEl.textContent = '計算燈光、CCTV 同視線…';
+    setTimeout(boot, 30);
+  }).catch(function () {
+    fail('未能載入地圖數據（Overpass 暫時繁忙或網絡有問題），請稍後再試。');
+  });
+
+  function boot() {
+  /* =====================================================================
+     2. ANALYSIS  (3D-aware: lamps and cameras sit above ground, so building
+        height decides what is lit or seen; sightlines use eye height)
+     ===================================================================== */
+  var NB = DATA.buildings.length;
+  var Bx0 = new Float32Array(NB), Bz0 = new Float32Array(NB), Bx1 = new Float32Array(NB), Bz1 = new Float32Array(NB), Bh = new Float32Array(NB);
+  DATA.buildings.forEach(function (b, i) {
+    var x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9;
+    b.pts.forEach(function (p) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < z0) z0 = p[1]; if (p[1] > z1) z1 = p[1]; });
+    Bx0[i] = x0; Bz0[i] = z0; Bx1[i] = x1; Bz1[i] = z1; Bh[i] = b.h;
+  });
+  function pip(x, z, pts) {
+    var inside = false;
+    for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      var xi = pts[i][0], zi = pts[i][1], xj = pts[j][0], zj = pts[j][1];
+      if (((zi > z) !== (zj > z)) && (x < (xj - xi) * (z - zi) / (zj - zi) + xi)) inside = !inside;
+    }
+    return inside;
+  }
+  // spatial index: 25 m buckets
+  var BK = 25, BNX = Math.ceil(DW / BK) + 1, BNZ = Math.ceil(DD / BK) + 1, bucket = new Array(BNX * BNZ), stamp = new Int32Array(NB), stampN = 0;
+  function bclamp(v, n) { return Math.max(0, Math.min(n - 1, v)); }
+  DATA.buildings.forEach(function (b, k) {
+    var i0 = bclamp(Math.floor(Bx0[k] / BK), BNX), i1 = bclamp(Math.floor(Bx1[k] / BK), BNX), j0 = bclamp(Math.floor(Bz0[k] / BK), BNZ), j1 = bclamp(Math.floor(Bz1[k] / BK), BNZ);
+    for (var j = j0; j <= j1; j++) for (var i = i0; i <= i1; i++) { var id = j * BNX + i; (bucket[id] || (bucket[id] = [])).push(k); }
+  });
+  function candidates(x0, z0, x1, z1) {
+    var out = [], i0 = bclamp(Math.floor(Math.min(x0, x1) / BK), BNX), i1 = bclamp(Math.floor(Math.max(x0, x1) / BK), BNX), j0 = bclamp(Math.floor(Math.min(z0, z1) / BK), BNZ), j1 = bclamp(Math.floor(Math.max(z0, z1) / BK), BNZ);
+    stampN++;
+    for (var j = j0; j <= j1; j++) for (var i = i0; i <= i1; i++) { var bk = bucket[j * BNX + i]; if (!bk) continue; for (var q = 0; q < bk.length; q++) { var k = bk[q]; if (stamp[k] !== stampN) { stamp[k] = stampN; out.push(k); } } }
+    return out;
+  }
+  function buildingAt(x, z) {
+    var c = candidates(x, z, x, z);
+    for (var q = 0; q < c.length; q++) { var k = c[q]; if (x > Bx0[k] && x < Bx1[k] && z > Bz0[k] && z < Bz1[k] && pip(x, z, DATA.buildings[k].pts)) return k; }
+    return -1;
+  }
+  var T0 = 0, T1 = 0, IGN = -1;
+  // segment vs building polygon: entry / exit parameters (T0, T1) along the segment
+  function segHit(x0, z0, x1, z1, k) {
+    if (k === IGN) return false;
+    if ((x0 < Bx0[k] && x1 < Bx0[k]) || (x0 > Bx1[k] && x1 > Bx1[k]) || (z0 < Bz0[k] && z1 < Bz0[k]) || (z0 > Bz1[k] && z1 > Bz1[k])) return false;
+    var pts = DATA.buildings[k].pts, dx = x1 - x0, dz = z1 - z0, tmin = 2, tmax = -1;
+    for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      var ax = pts[j][0], az = pts[j][1], ex = pts[i][0] - ax, ez = pts[i][1] - az;
+      var den = dx * ez - dz * ex; if (den > -1e-12 && den < 1e-12) continue;
+      var t = ((ax - x0) * ez - (az - z0) * ex) / den, u = ((ax - x0) * dz - (az - z0) * dx) / den;
+      if (t >= 0 && t <= 1 && u >= 0 && u <= 1) { if (t < tmin) tmin = t; if (t > tmax) tmax = t; }
+    }
+    if (tmax < 0) return false;
+    T0 = tmin; T1 = tmax; return true;
+  }
+  function blockedLine(x0, z0, h0, x1, z1, h1) {
+    var c = candidates(x0, z0, x1, z1);
+    for (var q = 0; q < c.length; q++) {
+      var k = c[q];
+      if (segHit(x0, z0, x1, z1, k)) {
+        var ha = h0 + (h1 - h0) * T0, hb = h0 + (h1 - h0) * T1;
+        if (Bh[k] > Math.min(ha, hb)) return true;
+      }
+    }
+    return false;
+  }
+  function firstHit(x, z, dx, dz, maxD) {
+    var x1 = x + dx * maxD, z1 = z + dz * maxD, best = maxD, c = candidates(x, z, x1, z1);
+    for (var q = 0; q < c.length; q++) { var k = c[q]; if (segHit(x, z, x1, z1, k)) { var d = T0 * maxD; if (d < best) best = d; } }
+    return best;
+  }
+
+  var blocked = new Uint8Array(NCELL), nogo = new Uint8Array(NCELL), light = new Float32Array(NCELL), cctv = new Float32Array(NCELL), open = new Float32Array(NCELL);
+  var crime = new Float32Array(NCELL), riskN = new Float32Array(NCELL);
+  function cx(i) { return (i + 0.5) * CELL; }
+  function cz(j) { return (j + 0.5) * CELL; }
+
+  // walkable mask: pavements/roads/paths (road half-width + 2.5 m), parks, car parks. Everything else is not a route.
+  function buildWalkMask() {
+    var walk = new Uint8Array(NCELL), i, j;
+    function stampC(x, z, r) {
+      var i0 = Math.max(0, Math.floor((x - r) / CELL)), i1 = Math.min(GW - 1, Math.floor((x + r) / CELL)), j0 = Math.max(0, Math.floor((z - r) / CELL)), j1 = Math.min(GD - 1, Math.floor((z + r) / CELL));
+      for (var jj = j0; jj <= j1; jj++) for (var ii = i0; ii <= i1; ii++) { var dx = cx(ii) - x, dz = cz(jj) - z; if (dx * dx + dz * dz <= r * r) walk[jj * GW + ii] = 1; }
+    }
+    function fillPoly(pts, val, arr) {
+      var x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; pts.forEach(function (p) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); });
+      var i0 = Math.max(0, Math.floor(x0 / CELL)), i1 = Math.min(GW - 1, Math.floor(x1 / CELL)), j0 = Math.max(0, Math.floor(z0 / CELL)), j1 = Math.min(GD - 1, Math.floor(z1 / CELL));
+      for (var jj = j0; jj <= j1; jj++) for (var ii = i0; ii <= i1; ii++) if (pip(cx(ii), cz(jj), pts)) arr[jj * GW + ii] = val;
+    }
+    DATA.roads.forEach(function (r) {
+      if (!r.walk) return;
+      for (var s = 1; s < r.pts.length; s++) {
+        var a = r.pts[s - 1], b = r.pts[s], len = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.max(1, Math.ceil(len / (CELL * 0.5)));
+        for (var q = 0; q <= n; q++) stampC(a[0] + (b[0] - a[0]) * q / n, a[1] + (b[1] - a[1]) * q / n, r.rad);
+      }
+    });
+    DATA.areas.forEach(function (a) { if (a.walk) fillPoly(a.pts, 1, walk); });
+    var water = new Uint8Array(NCELL);
+    DATA.areas.forEach(function (a) { if (a.kind === 'water') fillPoly(a.pts, 1, water); });
+    for (var id = 0; id < NCELL; id++) nogo[id] = (blocked[id] || !walk[id] || water[id]) ? 1 : 0;
+  }
+
+  var blocked = new Uint8Array(NCELL), light = new Float32Array(NCELL), cctv = new Float32Array(NCELL), open = new Float32Array(NCELL);
+  var crime = new Float32Array(NCELL), riskN = new Float32Array(NCELL);
+  function cx(i) { return (i + 0.5) * CELL; }
+  function cz(j) { return (j + 0.5) * CELL; }
+
+  function computeFields() {
+    var i, j, k, idx;
+    for (j = 0; j < GD; j++) for (i = 0; i < GW; i++) blocked[j * GW + i] = buildingAt(cx(i), cz(j)) >= 0 ? 1 : 0;
+    buildWalkMask();
+    DATA.lamps.forEach(function (L) {
+      if (L.p <= 0) return;
+      IGN = buildingAt(L.x, L.z);
+      var rad = L.r, hh = L.kind === 'shop' ? 2.5 : 6.2;
+      var i0 = Math.max(0, Math.floor((L.x - rad) / CELL)), i1 = Math.min(GW - 1, Math.floor((L.x + rad) / CELL));
+      var j0 = Math.max(0, Math.floor((L.z - rad) / CELL)), j1 = Math.min(GD - 1, Math.floor((L.z + rad) / CELL));
+      for (var jj = j0; jj <= j1; jj++) for (var ii = i0; ii <= i1; ii++) {
+        var id = jj * GW + ii; if (blocked[id]) continue;
+        var px = cx(ii), pz = cz(jj), d = Math.hypot(px - L.x, pz - L.z);
+        if (d >= rad) continue;
+        if (blockedLine(L.x, L.z, hh, px, pz, 0)) continue;
+        var c = L.p * Math.pow(1 - d / rad, 1.6);
+        light[id] = 1 - (1 - light[id]) * (1 - c);
+      }
+    });
+    DATA.cams.forEach(function (C) {
+      IGN = buildingAt(C.x, C.z);
+      var a0 = C.dir * Math.PI / 180, half = C.fov * Math.PI / 360;
+      var i0 = Math.max(0, Math.floor((C.x - C.range) / CELL)), i1 = Math.min(GW - 1, Math.floor((C.x + C.range) / CELL));
+      var j0 = Math.max(0, Math.floor((C.z - C.range) / CELL)), j1 = Math.min(GD - 1, Math.floor((C.z + C.range) / CELL));
+      for (var jj = j0; jj <= j1; jj++) for (var ii = i0; ii <= i1; ii++) {
+        var id = jj * GW + ii; if (blocked[id]) continue;
+        var dx = cx(ii) - C.x, dz = cz(jj) - C.z, d = Math.hypot(dx, dz);
+        if (d > C.range || d < 0.5) continue;
+        var da = Math.atan2(dz, dx) - a0; da = Math.atan2(Math.sin(da), Math.cos(da));
+        if (Math.abs(da) > half) continue;
+        if (blockedLine(C.x, C.z, 5, cx(ii), cz(jj), 1.0)) continue;
+        var v = 1 - 0.5 * d / C.range; if (v > cctv[id]) cctv[id] = v;
+      }
+    });
+    IGN = -1;
+    var DIRS = 12, dxs = [], dzs = [];
+    for (k = 0; k < DIRS; k++) { dxs.push(Math.cos(k * 2 * Math.PI / DIRS)); dzs.push(Math.sin(k * 2 * Math.PI / DIRS)); }
+    for (j = 0; j < GD; j++) for (i = 0; i < GW; i++) {
+      idx = j * GW + i; if (blocked[idx]) continue;
+      var sum = 0;
+      for (k = 0; k < DIRS; k++) sum += firstHit(cx(i), cz(j), dxs[k], dzs[k], 30);
+      open[idx] = sum / (DIRS * 30);
+    }
+    var sig = 12, rawMax = 0, raw = new Float32Array(NCELL);
+    DATA.incidents.forEach(function (n) {
+      var rad = sig * 3;
+      var i0 = Math.max(0, Math.floor((n[0] - rad) / CELL)), i1 = Math.min(GW - 1, Math.floor((n[0] + rad) / CELL));
+      var j0 = Math.max(0, Math.floor((n[1] - rad) / CELL)), j1 = Math.min(GD - 1, Math.floor((n[1] + rad) / CELL));
+      for (var jj = j0; jj <= j1; jj++) for (var ii = i0; ii <= i1; ii++) {
+        var d2 = (cx(ii) - n[0]) * (cx(ii) - n[0]) + (cz(jj) - n[1]) * (cz(jj) - n[1]);
+        raw[jj * GW + ii] += n[2] * Math.exp(-d2 / (2 * sig * sig));
+      }
+    });
+    for (idx = 0; idx < NCELL; idx++) if (!blocked[idx] && raw[idx] > rawMax) rawMax = raw[idx];
+    var rmin = 1e9, rmax = -1e9, tmp = new Float32Array(NCELL);
+    for (idx = 0; idx < NCELL; idx++) {
+      if (blocked[idx]) continue;
+      crime[idx] = rawMax > 0 ? raw[idx] / rawMax : 0;
+      var dark = 1 - Math.min(1, light[idx] * 1.25), unw = 1 - Math.min(1, cctv[idx] * 1.6), hid = 1 - open[idx];
+      var rk = 0.36 * dark + 0.14 * unw + 0.18 * hid + 0.32 * Math.pow(crime[idx], 0.8);
+      tmp[idx] = rk; if (rk < rmin) rmin = rk; if (rk > rmax) rmax = rk;
+    }
+    for (idx = 0; idx < NCELL; idx++) if (!blocked[idx]) riskN[idx] = (tmp[idx] - rmin) / Math.max(1e-6, rmax - rmin);
+  }
+
+  /* ---- route search: Dijkstra on the 2 m grid, cost = length x (1 + K x risk) ---- */
+  var heapD = [], heapN = [];
+  function hpush(d, n) {
+    var i = heapD.length; heapD.push(d); heapN.push(n);
+    while (i > 0) { var p = (i - 1) >> 1; if (heapD[p] <= d) break; heapD[i] = heapD[p]; heapN[i] = heapN[p]; i = p; }
+    heapD[i] = d; heapN[i] = n;
+  }
+  function hpop() {
+    var topN = heapN[0], ld = heapD.pop(), ln = heapN.pop(), n = heapD.length;
+    if (n > 0) {
+      var i = 0;
+      while (true) {
+        var c = 2 * i + 1; if (c >= n) break;
+        if (c + 1 < n && heapD[c + 1] < heapD[c]) c++;
+        if (heapD[c] >= ld) break;
+        heapD[i] = heapD[c]; heapN[i] = heapN[c]; i = c;
+      }
+      heapD[i] = ld; heapN[i] = ln;
+    }
+    return topN;
+  }
+  var NB8 = [[1, 0, 2], [-1, 0, 2], [0, 1, 2], [0, -1, 2], [1, 1, 2.828], [1, -1, 2.828], [-1, 1, 2.828], [-1, -1, 2.828]];
+  function findRoute(si, sj, ei, ej, K) {
+    var dist = new Float32Array(NCELL).fill(Infinity), prev = new Int32Array(NCELL).fill(-1);
+    var s = sj * GW + si, e = ej * GW + ei;
+    heapD.length = 0; heapN.length = 0;
+    dist[s] = 0; hpush(0, s);
+    while (heapD.length) {
+      var n = hpop(), nd = dist[n];
+      if (n === e) break;
+      var ni = n % GW, nj = (n - ni) / GW;
+      for (var q = 0; q < 8; q++) {
+        var mi = ni + NB8[q][0], mj = nj + NB8[q][1];
+        if (mi < 0 || mj < 0 || mi >= GW || mj >= GD) continue;
+        var m = mj * GW + mi; if (nogo[m]) continue;
+        if (NB8[q][2] > 2.5 && (nogo[nj * GW + mi] || nogo[mj * GW + ni])) continue;
+        var c = nd + NB8[q][2] * (1 + K * 0.5 * (riskN[n] + riskN[m]));
+        if (c < dist[m]) { dist[m] = c; prev[m] = n; hpush(c, m); }
+      }
+    }
+    if (prev[e] < 0 && s !== e) return null;
+    var path = [], cur = e;
+    while (cur !== -1) { path.push(cur); cur = prev[cur]; }
+    path.reverse();
+    return path;
+  }
+  function routeStats(path) {
+    var len = 0, dark = 0, cov = 0, riskSum = 0, run = 0, maxRun = 0, i, pts = [];
+    for (i = 0; i < path.length; i++) {
+      var id = path[i], gi = id % GW, gj = (id - gi) / GW;
+      pts.push([cx(gi), cz(gj)]);
+      var seg = 0;
+      if (i > 0) seg = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      len += seg; riskSum += riskN[id];
+      if (light[id] < 0.3) { dark += seg; run += seg; if (run > maxRun) maxRun = run; } else run = 0;
+      if (cctv[id] > 0.25) cov += seg;
+    }
+    var near = 0;
+    DATA.incidents.forEach(function (n) {
+      for (var p = 0; p < pts.length; p += 2) if (Math.hypot(pts[p][0] - n[0], pts[p][1] - n[1]) < 15) { near++; break; }
+    });
+    return { len: len, mins: len / 1.35 / 60, risk: Math.round(100 * riskSum / path.length), darkPct: len ? Math.round(100 * dark / len) : 0, cctvPct: len ? Math.round(100 * cov / len) : 0, near: near, maxDark: Math.round(maxRun), pts: pts };
+  }
+  function simplify(pts, eps) {
+    if (pts.length < 3) return pts.slice();
+    var a = pts[0], b = pts[pts.length - 1], dmax = 0, im = 0;
+    for (var i = 1; i < pts.length - 1; i++) {
+      var d = Math.abs((b[0] - a[0]) * (a[1] - pts[i][1]) - (a[0] - pts[i][0]) * (b[1] - a[1])) / (Math.hypot(b[0] - a[0], b[1] - a[1]) || 1);
+      if (d > dmax) { dmax = d; im = i; }
+    }
+    if (dmax > eps) { var l = simplify(pts.slice(0, im + 1), eps), rgt = simplify(pts.slice(im), eps); return l.slice(0, -1).concat(rgt); }
+    return [a, b];
+  }
+  function snap(x, z) {
+    var i0 = Math.max(0, Math.min(GW - 1, Math.floor(x / CELL))), j0 = Math.max(0, Math.min(GD - 1, Math.floor(z / CELL)));
+    for (var rad = 0; rad < 8; rad++) {
+      var best = null, bd = 1e9;
+      for (var dj = -rad; dj <= rad; dj++) for (var di = -rad; di <= rad; di++) {
+        var i = i0 + di, j = j0 + dj; if (i < 0 || j < 0 || i >= GW || j >= GD || nogo[j * GW + i]) continue;
+        var d = di * di + dj * dj; if (d < bd) { bd = d; best = [i, j]; }
+      }
+      if (best) return best;
+    }
+    return [i0, j0];
+  }
+
+  /* =====================================================================
+     3. SCENE
+     ===================================================================== */
+  var scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070b14);
+  scene.fog = new THREE.FogExp2(0x070b14, 0.0007 * 240 / Math.max(DW, DD));
+  var camera = new THREE.PerspectiveCamera(45, 1, 1, 6000);
+  scene.add(new THREE.HemisphereLight(0x5a6c9a, 0x0a0d14, 0.85));
+  var moon = new THREE.DirectionalLight(0x8da2d8, 0.55); moon.position.set(-120, 200, 80); scene.add(moon);
+  var maxAniso = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+  var seed2 = 5;
+  function r2() { seed2 = (seed2 * 16807) % 2147483647; return (seed2 - 1) / 2147483646; }
+
+  // ground (roads, pavements, park, car park, footpath) drawn once into a texture
+  // ground (roads, paths, parks, car parks, water) drawn once into a texture from OSM
+  (function () {
+    var S = Math.min(4, 4000 / Math.max(DW, DD)), c = document.createElement('canvas'); c.width = Math.round(DW * S); c.height = Math.round(DD * S);
+    var g = c.getContext('2d');
+    g.fillStyle = '#171c27'; g.fillRect(0, 0, c.width, c.height);
+    var AC = { green: '#102418', park: '#1c212c', water: '#0b1d33' };
+    DATA.areas.forEach(function (a) { g.fillStyle = AC[a.kind]; g.beginPath(); a.pts.forEach(function (p, i) { if (i) g.lineTo(p[0] * S, p[1] * S); else g.moveTo(p[0] * S, p[1] * S); }); g.closePath(); g.fill(); });
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    DATA.roads.slice().sort(function (a, b) { return (b.w || 0) - (a.w || 0); }).forEach(function (r) {
+      if (!r.walk) return;
+      g.strokeStyle = r.w <= 3.5 ? '#2c3a2f' : '#232a37'; g.lineWidth = (r.w + 1.5) * S;
+      g.beginPath(); r.pts.forEach(function (p, i) { if (i) g.lineTo(p[0] * S, p[1] * S); else g.moveTo(p[0] * S, p[1] * S); }); g.stroke();
+    });
+    g.setLineDash([6 * S, 8 * S]); g.strokeStyle = 'rgba(220,225,235,0.22)'; g.lineWidth = 0.8 * S;
+    DATA.roads.forEach(function (r) { if (!r.walk || r.w < 6) return; g.beginPath(); r.pts.forEach(function (p, i) { if (i) g.lineTo(p[0] * S, p[1] * S); else g.moveTo(p[0] * S, p[1] * S); }); g.stroke(); });
+    var tex = new THREE.CanvasTexture(c); tex.anisotropy = maxAniso;
+    var m = new THREE.Mesh(new THREE.PlaneGeometry(DW, DD), new THREE.MeshBasicMaterial({ map: tex }));
+    m.rotation.x = -Math.PI / 2; m.position.set(DW / 2, 0, DD / 2); scene.add(m);
+  })();
+
+  // buildings with lit-window facades
+  var winMats = (function () {
+    var out = [];
+    for (var v = 0; v < 3; v++) {
+      var a = document.createElement('canvas'), b = document.createElement('canvas'); a.width = a.height = b.width = b.height = 128;
+      var ga = a.getContext('2d'), gb = b.getContext('2d');
+      ga.fillStyle = '#1c2434'; ga.fillRect(0, 0, 128, 128); gb.fillStyle = '#000'; gb.fillRect(0, 0, 128, 128);
+      for (var fx = 0; fx < 2; fx++) for (var fy = 0; fy < 2; fy++) {
+        var x = 8 + fx * 64, y = 10 + fy * 64;
+        ga.fillStyle = '#0d1320'; ga.fillRect(x, y, 48, 40);
+        if (r2() < 0.34) { gb.fillStyle = ['#ffd98a', '#ffe9b8', '#ffcf7a', '#bcd7ff'][Math.floor(r2() * 4)]; gb.fillRect(x, y, 48, 40); }
+      }
+      var td = new THREE.CanvasTexture(a), te = new THREE.CanvasTexture(b);
+      [td, te].forEach(function (t) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = maxAniso; t.repeat.set(1 / 6, 1 / 6); });
+      out.push(new THREE.MeshStandardMaterial({ map: td, emissive: 0xffffff, emissiveMap: te, emissiveIntensity: 0.9, roughness: 0.9 }));
+    }
+    return out;
+  })();
+  var roofMat = new THREE.MeshStandardMaterial({ color: 0x141a26, roughness: 1 });
+  var treeMat = new THREE.MeshStandardMaterial({ color: 0x14402a, roughness: 1 });
+  var trunkMat = new THREE.MeshStandardMaterial({ color: 0x2a2018, roughness: 1 });
+  DATA.buildings.forEach(function (b, i) {
+    var sh = new THREE.Shape();
+    b.pts.forEach(function (p, q) { if (q === 0) sh.moveTo(p[0], -p[1]); else sh.lineTo(p[0], -p[1]); });
+    var geo; try { geo = new THREE.ExtrudeGeometry(sh, { depth: b.h, bevelEnabled: false }); } catch (e) { return; }
+    geo.rotateX(-Math.PI / 2);
+    var mesh = new THREE.Mesh(geo, [roofMat, winMats[i % 3]]); scene.add(mesh);
+  });
+
+  // street lamps (instanced poles + heads) and glow halos
+  (function () {
+    var lamps = DATA.lamps.filter(function (l) { return l.kind === 'lamp'; });
+    var poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.12, 0.16, 6, 6), new THREE.MeshBasicMaterial({ color: 0x3a4456 }), lamps.length);
+    var heads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.45, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff }), lamps.length);
+    var o = new THREE.Object3D(), col = new THREE.Color();
+    lamps.forEach(function (l, i) {
+      o.position.set(l.x, 3, l.z); o.updateMatrix(); poles.setMatrixAt(i, o.matrix);
+      o.position.set(l.x, 6.2, l.z); o.updateMatrix(); heads.setMatrixAt(i, o.matrix);
+      heads.setColorAt(i, col.set(l.broken ? 0x4a3a3a : 0xffdf9a));
+    });
+    scene.add(poles); scene.add(heads);
+    var g = document.createElement('canvas'); g.width = g.height = 64;
+    var cg = g.getContext('2d'), gr = cg.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,255,255,0.9)'); gr.addColorStop(0.35, 'rgba(255,255,255,0.28)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    cg.fillStyle = gr; cg.fillRect(0, 0, 64, 64);
+    var gt = new THREE.CanvasTexture(g);
+    var warm = new THREE.SpriteMaterial({ map: gt, color: 0xffcf80, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.8 });
+    var shop = new THREE.SpriteMaterial({ map: gt, color: 0xffb060, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.55 });
+    DATA.lamps.forEach(function (l) {
+      if (l.broken) return;
+      var s = new THREE.Sprite(l.kind === 'shop' ? shop : warm);
+      s.position.set(l.x, l.kind === 'shop' ? 2.6 : 6.2, l.z); s.scale.setScalar(l.kind === 'shop' ? 9 : 11 * (0.6 + 0.4 * l.p)); scene.add(s);
+    });
+  })();
+
+  // CCTV cameras and their line-of-sight fans
+  var camGroup = new THREE.Group(), fanGroup = new THREE.Group(), incGroup = new THREE.Group();
+  scene.add(camGroup); scene.add(fanGroup); scene.add(incGroup);
+  function fanMesh(x, z, a0, a1, range, steps, y, color, opacity) {
+    var pos = [x, y, z], idx = [];
+    for (var s = 0; s <= steps; s++) {
+      var a = a0 + (a1 - a0) * s / steps, d = firstHit(x, z, Math.cos(a), Math.sin(a), range);
+      pos.push(x + Math.cos(a) * d, y, z + Math.sin(a) * d);
+    }
+    for (var t = 0; t < steps; t++) idx.push(0, t + 1, t + 2);
+    var g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx);
+    return new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: opacity, side: THREE.DoubleSide, depthWrite: false }));
+  }
+  DATA.cams.forEach(function (c) {
+    var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 5, 6), new THREE.MeshBasicMaterial({ color: 0x3a4456 })); pole.position.set(c.x, 2.5, c.z); camGroup.add(pole);
+    var head = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.7, 0.7), new THREE.MeshBasicMaterial({ color: 0x40e8e8 }));
+    head.position.set(c.x, 5.2, c.z); head.rotation.y = -c.dir * Math.PI / 180; camGroup.add(head);
+    var a0 = (c.dir - c.fov / 2) * Math.PI / 180, a1 = (c.dir + c.fov / 2) * Math.PI / 180;
+    fanGroup.add(fanMesh(c.x, c.z, a0, a1, c.range, 36, 0.2, 0x40e8e8, 0.2));
+  });
+  DATA.incidents.forEach(function (n) {
+    var m = new THREE.Mesh(new THREE.ConeGeometry(0.9, 3.4 + n[2] * 2, 6), new THREE.MeshBasicMaterial({ color: 0xff4d5e }));
+    m.position.set(n[0], 1.9 + n[2], n[1]); m.rotation.x = Math.PI; incGroup.add(m);
+  });
+
+  // labels
+  function label(text, x, y, z, scale, color) {
+    var c = document.createElement('canvas'); c.width = 384; c.height = 80;
+    var g = c.getContext('2d'); g.font = '600 34px "Noto Sans TC", "PingFang TC", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    var w = Math.min(372, g.measureText(text).width + 28);
+    g.fillStyle = 'rgba(10,15,26,0.82)'; g.fillRect((384 - w) / 2, 10, w, 60);
+    g.strokeStyle = color || 'rgba(232,237,245,0.35)'; g.lineWidth = 2; g.strokeRect((384 - w) / 2, 10, w, 60);
+    g.fillStyle = '#e8edf5'; g.fillText(text, 192, 41);
+    var s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));
+    s.position.set(x, y, z); s.scale.set(scale, scale * 80 / 384, 1); s.renderOrder = 10; scene.add(s); return s;
+  }
+
+  // heat overlay
+  var overlay = new THREE.Mesh(new THREE.PlaneGeometry(DW, DD), new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, opacity: 1 }));
+  overlay.rotation.x = -Math.PI / 2; overlay.position.set(DW / 2, 0.08, DD / 2); overlay.renderOrder = 2; scene.add(overlay);
+  var small = document.createElement('canvas'); small.width = GW; small.height = GD;
+  var big = document.createElement('canvas'); big.width = GW * 4; big.height = GD * 4;
+  var overlayTex = new THREE.CanvasTexture(big); overlayTex.anisotropy = maxAniso; overlay.material.map = overlayTex;
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function mix(c1, c2, t) { return [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t), lerp(c1[3], c2[3], t)]; }
+  function cellColor(layer, id) {
+    var v;
+    if (nogo[id]) return [0, 0, 0, 0];
+    if (layer === 'risk') {
+      v = riskN[id];
+      if (v < 0.2) return [255, 214, 10, v * 0.4];
+      if (v < 0.5) return mix([255, 214, 10, 0.12], [255, 150, 40, 0.42], (v - 0.2) / 0.3);
+      if (v < 0.8) return mix([255, 150, 40, 0.42], [255, 70, 70, 0.62], (v - 0.5) / 0.3);
+      return mix([255, 70, 70, 0.62], [255, 30, 80, 0.8], (v - 0.8) / 0.2);
+    }
+    if (layer === 'light') return mix([20, 30, 70, 0.55], [255, 214, 120, 0.8], Math.min(1, light[id] * 1.3));
+    if (layer === 'cctv') { v = cctv[id]; return v > 0 ? [64, 232, 232, 0.28 + 0.4 * v] : [10, 20, 40, 0.4]; }
+    if (layer === 'sight') return mix([90, 140, 255, 0.1], [255, 70, 200, 0.75], Math.pow(1 - open[id], 1.3));
+    if (layer === 'crime') { v = crime[id]; return [255, 60, 60, v * 0.8]; }
+    return [0, 0, 0, 0];
+  }
+  var LEGEND = {
+    risk: ['低', '高', 'linear-gradient(90deg,#ffd60a22,#ff9628,#ff4646,#ff1e50)'],
+    light: ['暗', '光', 'linear-gradient(90deg,#141e46,#8a7a50,#ffd678)'],
+    cctv: ['冇覆蓋', '有覆蓋', 'linear-gradient(90deg,#0a1428,#40e8e8)'],
+    sight: ['開闊', '死角', 'linear-gradient(90deg,#5a8cff44,#ff46c8)'],
+    crime: ['少', '多', 'linear-gradient(90deg,#ff3c3c00,#ff3c3c)'],
+    none: ['', '', 'transparent']
+  };
+  var layer = 'risk';
+  function setLayer(name) {
+    layer = name;
+    var g = small.getContext('2d'), img = g.createImageData(GW, GD);
+    for (var id = 0; id < NCELL; id++) { var c = cellColor(name, id); img.data[id * 4] = c[0]; img.data[id * 4 + 1] = c[1]; img.data[id * 4 + 2] = c[2]; img.data[id * 4 + 3] = Math.max(0, Math.min(255, c[3] * 255)); }
+    g.putImageData(img, 0, 0);
+    var bg = big.getContext('2d'); bg.clearRect(0, 0, big.width, big.height); bg.imageSmoothingEnabled = true; bg.imageSmoothingQuality = 'high'; bg.drawImage(small, 0, 0, big.width, big.height);
+    overlayTex.needsUpdate = true; overlay.visible = name !== 'none';
+    fanGroup.visible = name === 'cctv'; incGroup.visible = name === 'crime' || name === 'risk';
+    var lg = LEGEND[name];
+    document.getElementById('lg-lo').textContent = lg[0]; document.getElementById('lg-hi').textContent = lg[1];
+    var bar = document.getElementById('lg-bar'); bar.style.background = lg[2]; bar.style.visibility = name === 'none' ? 'hidden' : 'visible';
+    Array.prototype.forEach.call(document.querySelectorAll('[data-layer]'), function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-layer') === name)); });
+  }
+
+  /* ---- routes, pins, viewshed ---- */
+  var routeGroup = new THREE.Group(), pinGroup = new THREE.Group(), viewGroup = new THREE.Group(); scene.add(routeGroup); scene.add(pinGroup); scene.add(viewGroup);
+  var walker = new THREE.Mesh(new THREE.SphereGeometry(1.5, 12, 10), new THREE.MeshBasicMaterial({ color: 0xffffff })); walker.visible = false; scene.add(walker);
+  var walkPath = [], walkLen = 0;
+  function clearGroup(g) { while (g.children.length) { var c = g.children.pop(); if (c.geometry) c.geometry.dispose(); } }
+  function drawLine(pts, color, y, rad) {
+    var mat = new THREE.MeshBasicMaterial({ color: color }), up = new THREE.Vector3(0, 1, 0);
+    for (var i = 0; i < pts.length - 1; i++) {
+      var a = new THREE.Vector3(pts[i][0], y, pts[i][1]), b = new THREE.Vector3(pts[i + 1][0], y, pts[i + 1][1]);
+      var len = a.distanceTo(b); if (len < 0.01) continue;
+      var m = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad, len, 8), mat);
+      m.position.copy(a).add(b).multiplyScalar(0.5); m.quaternion.setFromUnitVectors(up, b.clone().sub(a).normalize()); routeGroup.add(m);
+      var j = new THREE.Mesh(new THREE.SphereGeometry(rad, 8, 6), mat); j.position.copy(a); routeGroup.add(j);
+    }
+    var e = new THREE.Mesh(new THREE.SphereGeometry(rad, 8, 6), mat); e.position.set(pts[pts.length - 1][0], y, pts[pts.length - 1][1]); routeGroup.add(e);
+  }
+  var startPt = [toX(A[1]), toZ(A[0])], endPt = [toX(B[1]), toZ(B[0])];
+  function drawPins() {
+    clearGroup(pinGroup);
+    [[startPt, 0x3ee6a8, '起點'], [endPt, 0x5aa8ff, '終點']].forEach(function (p) {
+      var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 9, 6), new THREE.MeshBasicMaterial({ color: p[1] })); pole.position.set(p[0][0], 4.5, p[0][1]); pinGroup.add(pole);
+      var ball = new THREE.Mesh(new THREE.SphereGeometry(1.6, 12, 10), new THREE.MeshBasicMaterial({ color: p[1] })); ball.position.set(p[0][0], 9.5, p[0][1]); pinGroup.add(ball);
+      var lb = label(p[2], p[0][0], 16, p[0][1], 22, '#' + p[1].toString(16)); scene.remove(lb); pinGroup.add(lb);
+    });
+  }
+  var gridEl = document.getElementById('grid'), verdictEl = document.getElementById('verdict');
+  var lastResult = null;
+  function recompute() {
+    var si = snap(startPt[0], startPt[1]), ei = snap(endPt[0], endPt[1]);
+    var K = parseInt(document.getElementById('k').value, 10) * 0.9;
+    var pf = findRoute(si[0], si[1], ei[0], ei[1], 0), ps = findRoute(si[0], si[1], ei[0], ei[1], K);
+    clearGroup(routeGroup);
+    if (!pf || !ps) { gridEl.innerHTML = ''; verdictEl.textContent = '呢兩點之間搵唔到可行路線，試下揀第二個位置。'; walker.visible = false; return; }
+    var f = routeStats(pf), s = routeStats(ps), same = pf.join() === ps.join();
+    drawLine(simplify(f.pts, 1.4), 0xff9b3d, 0.7, 0.9);
+    drawLine(simplify(s.pts, 1.4), 0x3ee6a8, 1.0, 1.1);
+    walkPath = simplify(s.pts, 1.4); walkLen = 0; for (var i = 1; i < walkPath.length; i++) walkLen += Math.hypot(walkPath[i][0] - walkPath[i - 1][0], walkPath[i][1] - walkPath[i - 1][1]);
+    walker.visible = walkLen > 0;
+    function pct(n) { return n + '%'; }
+    function better(a, b, lowGood) { return a === b ? ['', ''] : ((lowGood ? a < b : a > b) ? ['good', ''] : ['', 'good']); }
+    var rows = [
+      ['距離', Math.round(f.len) + ' m', Math.round(s.len) + ' m', ['', '']],
+      ['步行', f.mins.toFixed(1) + ' 分鐘', s.mins.toFixed(1) + ' 分鐘', ['', '']],
+      ['風險指數', f.risk, s.risk, better(f.risk, s.risk, true)],
+      ['黑暗路段', pct(f.darkPct), pct(s.darkPct), better(f.darkPct, s.darkPct, true)],
+      ['CCTV 覆蓋', pct(f.cctvPct), pct(s.cctvPct), better(f.cctvPct, s.cctvPct, false)],
+      ['附近事件', f.near + ' 宗', s.near + ' 宗', better(f.near, s.near, true)]
+    ];
+    var html = '<span></span><span class="h"><i style="background:var(--fast)"></i>最快</span><span class="h"><i style="background:var(--safe)"></i>最安全</span>';
+    rows.forEach(function (r) { html += '<span class="l">' + r[0] + '</span><span class="' + r[3][0] + '">' + r[1] + '</span><span class="' + r[3][1] + '">' + r[2] + '</span>'; });
+    gridEl.innerHTML = html;
+    if (same) verdictEl.textContent = '兩條路線相同：呢個起終點之間，最快都係相對安全嘅走法。';
+    else {
+      var dm = Math.round(s.len - f.len), dt = Math.max(0.1, (s.mins - f.mins)).toFixed(1), drop = f.risk > 0 ? Math.round(100 * (f.risk - s.risk) / f.risk) : 0;
+      verdictEl.textContent = '安全路線多行 ' + dm + ' m（約 +' + dt + ' 分鐘），風險指數低 ' + drop + '%，黑暗路段由 ' + f.darkPct + '% 減到 ' + s.darkPct + '%。';
+    }
+    lastResult = { fast: f, safe: s, same: same };
+    window.__sw = { fast: { len: f.len, risk: f.risk, dark: f.darkPct, cctv: f.cctvPct, near: f.near }, safe: { len: s.len, risk: s.risk, dark: s.darkPct, cctv: s.cctvPct, near: s.near }, same: same };
+  }
+
+  var viewInfo = document.getElementById('viewinfo');
+  function showView(x, z) {
+    var sn = snap(x, z), px = cx(sn[0]), pz = cz(sn[1]);
+    clearGroup(viewGroup);
+    viewGroup.add(fanMesh(px, pz, 0, Math.PI * 2, 70, 180, 0.35, 0xb07bff, 0.3));
+    var pin = new THREE.Mesh(new THREE.SphereGeometry(1.4, 10, 8), new THREE.MeshBasicMaterial({ color: 0xb07bff })); pin.position.set(px, 1.6, pz); viewGroup.add(pin);
+    var area = 0, steps = 180, prevD = firstHit(px, pz, 1, 0, 70);
+    for (var s = 1; s <= steps; s++) { var a = s * 2 * Math.PI / steps, d = firstHit(px, pz, Math.cos(a), Math.sin(a), 70); area += 0.5 * prevD * d * Math.sin(2 * Math.PI / steps); prevD = d; }
+    var pctOpen = Math.round(100 * area / (Math.PI * 70 * 70));
+    var nl = 1e9; DATA.lamps.forEach(function (l) { if (l.p > 0 && l.kind === 'lamp') nl = Math.min(nl, Math.hypot(l.x - px, l.z - pz)); });
+    var id = sn[1] * GW + sn[0];
+    viewInfo.hidden = false;
+    viewInfo.textContent = '視野開闊度 ' + pctOpen + '%（紫色範圍＝呢點睇到同被睇到嘅地方） · 風險指數 ' + Math.round(riskN[id] * 100) + ' · 最近亮燈 ' + Math.round(nl) + ' m · ' + (cctv[id] > 0.25 ? 'CCTV 有覆蓋' : 'CCTV 冇覆蓋');
+  }
+  function clearView() { clearGroup(viewGroup); viewInfo.hidden = true; }
+
+  /* =====================================================================
+     4. CAMERA + INPUT
+     ===================================================================== */
+  var SZ = Math.hypot(endPt[0] - startPt[0], endPt[1] - startPt[1]) * 1.1 + 200, orb = { theta: 0.0, phi: 0.95, r: SZ * 1.2, tx: (startPt[0] + endPt[0]) / 2, ty: 0, tz: (startPt[1] + endPt[1]) / 2 + SZ * 0.12 };
+  var userZoom = false, mode = null;
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  function placeCamera() {
+    var sp = Math.sin(orb.phi);
+    camera.position.set(orb.tx + orb.r * sp * Math.sin(orb.theta), orb.ty + orb.r * Math.cos(orb.phi), orb.tz + orb.r * sp * Math.cos(orb.theta));
+    camera.lookAt(orb.tx, orb.ty, orb.tz);
+  }
+  function resize() {
+    var w = stage.clientWidth || 1, h = stage.clientHeight || 1;
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+    if (!userZoom) orb.r = SZ * (w / h < 0.9 ? 1.35 : 1.0);
+  }
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(stage);
+  window.addEventListener('resize', resize); resize();
+
+  var el = renderer.domElement, ptrs = new Map(), pinchD = 0, pinchC = null, down = null;
+  var ray = new THREE.Raycaster(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit = new THREE.Vector3();
+  function groundAt(clientX, clientY) {
+    var r = el.getBoundingClientRect();
+    ray.setFromCamera(new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1), camera);
+    return ray.ray.intersectPlane(plane, hit) ? [hit.x, hit.z] : null;
+  }
+  function pan(dx, dy) {
+    var s = 2 * orb.r * Math.tan(camera.fov * Math.PI / 360) / (stage.clientHeight || 1), rx = Math.cos(orb.theta), rz = -Math.sin(orb.theta), fx = -Math.sin(orb.theta), fz = -Math.cos(orb.theta);
+    var k = Math.max(0.35, Math.cos(orb.phi));
+    orb.tx = clamp(orb.tx - rx * dx * s + fx * dy * s / k, 0, DW); orb.tz = clamp(orb.tz - rz * dx * s + fz * dy * s / k, 0, DD);
+  }
+  el.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  el.addEventListener('pointerdown', function (e) {
+    try { el.setPointerCapture(e.pointerId); } catch (err) {}
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, btn: e.button, shift: e.shiftKey });
+    down = ptrs.size === 1 ? { x: e.clientX, y: e.clientY, t: performance.now(), moved: false } : null;
+    if (ptrs.size === 2) { var a = Array.from(ptrs.values()); pinchD = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y); pinchC = { x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2 }; }
+  });
+  el.addEventListener('pointermove', function (e) {
+    var p = ptrs.get(e.pointerId); if (!p) return;
+    var dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+    if (ptrs.size === 1) {
+      if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) down.moved = true;
+      if (p.btn === 2 || p.shift) pan(dx, dy);
+      else { orb.theta -= dx * 0.008; orb.phi = clamp(orb.phi - dy * 0.006, 0.2, 1.45); }
+    } else if (ptrs.size === 2) {
+      var a = Array.from(ptrs.values()), d = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y), c = { x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2 };
+      if (pinchD > 0) { orb.r = clamp(orb.r * pinchD / d, 40, 2500); userZoom = true; }
+      if (pinchC) pan(c.x - pinchC.x, c.y - pinchC.y);
+      pinchD = d; pinchC = c;
+    }
+  });
+  function endPtr(e) {
+    var had = ptrs.size === 1 && down && !down.moved && performance.now() - down.t < 450 && e.type === 'pointerup';
+    ptrs.delete(e.pointerId); if (ptrs.size < 2) { pinchD = 0; pinchC = null; }
+    if (had) onTap(e.clientX, e.clientY);
+    if (!ptrs.size) down = null;
+  }
+  el.addEventListener('pointerup', endPtr); el.addEventListener('pointercancel', endPtr);
+  el.addEventListener('wheel', function (e) { e.preventDefault(); userZoom = true; orb.r = clamp(orb.r * Math.exp(e.deltaY * 0.001), 40, 2500); }, { passive: false });
+
+  function onTap(x, y) {
+    if (!mode) return;
+    var g = groundAt(x, y); if (!g || g[0] < 0 || g[1] < 0 || g[0] > DW || g[1] > DD) return;
+    if (mode === 'view') { showView(g[0], g[1]); return; }
+    var sn = snap(g[0], g[1]), pt = [cx(sn[0]), cz(sn[1])];
+    if (mode === 'start') startPt = pt; else endPt = pt;
+    drawPins(); recompute(); setMode(null);
+  }
+  var tools = { start: document.getElementById('t-start'), end: document.getElementById('t-end'), view: document.getElementById('t-view') };
+  function setMode(m) {
+    mode = (mode === m) ? null : m;
+    Object.keys(tools).forEach(function (k) { tools[k].setAttribute('aria-pressed', String(mode === k)); });
+    if (mode !== 'view') clearView();
+  }
+  Object.keys(tools).forEach(function (k) { tools[k].addEventListener('click', function () { setMode(k); }); });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-layer]'), function (b) { b.addEventListener('click', function () { setLayer(b.getAttribute('data-layer')); }); });
+  var kEl = document.getElementById('k'), kOut = document.getElementById('k-out'), pend = false;
+  kEl.addEventListener('input', function () { kOut.textContent = kEl.value; if (!pend) { pend = true; requestAnimationFrame(function () { pend = false; if (window.__swReady) recompute(); }); } });
+  var cardEl = document.getElementById('card'), tgl = document.getElementById('card-toggle');
+  tgl.addEventListener('click', function () { var c = cardEl.classList.toggle('collapsed'); tgl.textContent = c ? '展開' : '收起'; tgl.setAttribute('aria-expanded', String(!c)); });
+
+  /* ---- loop ---- */
+  var last = performance.now(), wt = 0;
+  function frame(now) {
+    requestAnimationFrame(frame);
+    var dt = Math.min(0.05, (now - last) / 1000); last = now;
+    placeCamera();
+    if (walker.visible && walkLen > 0) {
+      wt = (wt + dt * 14) % (walkLen + 20);
+      var d = Math.min(wt, walkLen), acc = 0;
+      for (var i = 1; i < walkPath.length; i++) {
+        var sl = Math.hypot(walkPath[i][0] - walkPath[i - 1][0], walkPath[i][1] - walkPath[i - 1][1]);
+        if (acc + sl >= d) { var t = sl > 0 ? (d - acc) / sl : 0; walker.position.set(lerp(walkPath[i - 1][0], walkPath[i][0], t), 2.2, lerp(walkPath[i - 1][1], walkPath[i][1], t)); break; }
+        acc += sl;
+      }
+    }
+    renderer.render(scene, camera);
+  }
+  requestAnimationFrame(frame);
+
+  setTimeout(function () {
+    var t0 = performance.now();
+    computeFields();
+    setLayer('risk'); drawPins(); recompute();
+    window.__swReady = true; window.__swMs = Math.round(performance.now() - t0);
+    var st = DATA.stats, warn = (st.lampsMapped + st.litM / 28) < Math.max(8, DW * DD / 6000) ? ' ⚠ 呢區 OSM 街燈資料偏少，燈光分析可能偏保守。' : '';
+    document.getElementById('datanote').textContent = 'OpenStreetMap：樓宇 ' + st.bld + ' · 街燈 ' + st.lampsMapped + '（另有 ' + Math.round(st.litM) + ' m 標記 lit 路段）· CCTV ' + st.cams + '。罪案：' + (st.crimesOk ? 'police.uk 近 3 個月 ' + st.crimes + ' 宗（位置為大約）' : '暫時載入唔到') + '。實驗性指標，唔代表人身安全保證。' + warn;
+    loadEl.hidden = true;
+  }, 30);
+  }
+})();
+</script>
+</body></html>
