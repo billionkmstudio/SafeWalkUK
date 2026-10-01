@@ -30,12 +30,12 @@ function counts(lat,lng){
   var q='[out:json][timeout:25];node["highway"="street_lamp"]'+a+';out count;way["highway"]["lit"~"^(yes|24/7|automatic)$"]'+a+';out count;node["man_made"="surveillance"]'+a+';out count;way["building"]'+a+';out count;';
   var i=0;
   function next(){
-    if(i>=SRV.length*2)return Promise.reject(new Error('osm'));
+    if(i>=SRV.length)return Promise.reject(new Error('osm'));
     var s=SRV[i%SRV.length];i++;
-    return tf(s,{method:'POST',body:'data='+encodeURIComponent(q),headers:{'Content-Type':'application/x-www-form-urlencoded'}},30000)
+    return tf(s,{method:'POST',body:'data='+encodeURIComponent(q),headers:{'Content-Type':'application/x-www-form-urlencoded'}},20000)
       .then(function(r){if(!r.ok)throw 0;return r.json()})
       .then(function(j){var c=(j.elements||[]).filter(function(e){return e.type==='count'}).map(function(e){return +e.tags.total});if(c.length<4)throw 0;return c;})
-      .catch(function(){return sleep(1200).then(next)});
+      .catch(function(){return sleep(700).then(next)});
   }
   return next();
 }
@@ -44,22 +44,25 @@ function crimes(lat,lng){
   return tf('https://data.police.uk/api/crimes-street/all-crime?lat='+lat+'&lng='+lng+'&date='+m,null,15000).then(function(r){return r.ok?r.json():null}).then(function(j){return j?j.length:null}).catch(function(){return null});
 }
 function cls(v,hi,mid){return v>=hi?'ok':v>=mid?'mid':'low'}
+function check(p,tr){
+  tr.innerHTML='<td>'+p[0]+'</td><td colspan="6" style="text-align:left;color:var(--muted)">載入中…</td>';
+  return Promise.all([counts(p[1],p[2]).catch(function(){return null}),crimes(p[1],p[2])]).then(function(res){
+    var c=res[0],cr=res[1];
+    if(!c){tr.innerHTML='<td>'+p[0]+'</td><td colspan="6" style="text-align:left"><span class="low">Overpass 暫時冇回應</span> <a href="#" class="rt">重試</a></td>';tr.querySelector('.rt').addEventListener('click',function(e){e.preventDefault();check(p,tr);});}
+    else{
+      var link='3d.html?from='+p[1]+','+p[2]+'&to='+(p[1]+0.0035).toFixed(5)+','+(p[2]+0.005).toFixed(5);
+      tr.innerHTML='<td>'+p[0]+'</td><td class="'+cls(c[0],40,10)+'">'+c[0]+'</td><td class="'+cls(c[1],25,6)+'">'+c[1]+'</td><td class="'+cls(c[2],6,1)+'">'+c[2]+'</td><td>'+c[3]+'</td><td>'+(cr==null?'—':cr)+'</td><td><a href="'+link+'">3D</a></td>';
+    }
+  });
+}
 btn.addEventListener('click',function(){
   btn.disabled=true;tb.innerHTML='';
   var k=0;
   (function step(){
     if(k>=PLACES.length){st.textContent='完成。';btn.disabled=false;return;}
     var p=PLACES[k++];st.textContent='檢查中 '+k+'/'+PLACES.length+'：'+p[0]+'…';
-    var tr=document.createElement('tr');tr.innerHTML='<td>'+p[0]+'</td><td colspan="6" style="text-align:left;color:var(--muted)">載入中…</td>';tb.appendChild(tr);
-    Promise.all([counts(p[1],p[2]).catch(function(){return null}),crimes(p[1],p[2])]).then(function(res){
-      var c=res[0],cr=res[1];
-      if(!c){tr.innerHTML='<td>'+p[0]+'</td><td colspan="6" class="low" style="text-align:left">Overpass 暫時冇回應，稍後再試</td>';}
-      else{
-        var link='3d.html?from='+p[1]+','+p[2]+'&to='+(p[1]+0.0035).toFixed(5)+','+(p[2]+0.005).toFixed(5);
-        tr.innerHTML='<td>'+p[0]+'</td><td class="'+cls(c[0],40,10)+'">'+c[0]+'</td><td class="'+cls(c[1],25,6)+'">'+c[1]+'</td><td class="'+cls(c[2],6,1)+'">'+c[2]+'</td><td>'+c[3]+'</td><td>'+(cr==null?'—':cr)+'</td><td><a href="'+link+'">3D</a></td>';
-      }
-      return sleep(1200);
-    }).then(step);
+    var tr=document.createElement('tr');tb.appendChild(tr);
+    check(p,tr).then(function(){return sleep(900)}).then(step);
   })();
 });
 })();
