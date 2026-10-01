@@ -70,15 +70,25 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 
 .loading, .fail { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; padding: 12px 16px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); text-align: center; width: max-content; max-width: 90%; }
 #compass { position: absolute; top: 56px; right: 16px; width: 38px; height: 38px; border-radius: 50%; background: var(--panel); border: 1px solid var(--line); display: grid; place-items: center; pointer-events: none; font-size: 0.6rem; color: var(--muted); } #compass i { position: absolute; left: 50%; top: 4px; width: 0; height: 0; margin-left: -4px; border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 10px solid var(--risk); } #compass span { margin-top: 12px; }
+#zoom { position: absolute; right: 16px; top: 190px; display: flex; flex-direction: column; gap: 8px; z-index: 5; }
+#zoom button { width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: 600 1.4rem/1 var(--font-body); cursor: pointer; }
+.route { font-size: 0.8125rem; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; align-self: flex-start; max-width: 100%; line-height: 1.4; }
+.route b { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 0.7rem; color: #04140d; margin-right: 4px; }
+.route .a { background: #3ee6a8; } .route .b { background: #5aa8ff; } .route em { font-style: normal; color: var(--accent); margin-left: 6px; white-space: nowrap; }
+#fpbar { position: absolute; left: 50%; bottom: 175px; transform: translateX(-50%); display: none; gap: 8px; z-index: 6; }
+#fpbar.on { display: flex; }
 .back { font-size: 0.75rem; color: var(--accent); text-decoration: none; margin-left: auto; pointer-events: auto; }
 </style>
 
 </head><body>
 <main id="app">
   <div id="stage" tabindex="0" aria-label="夜間街區 3D 地圖"></div>
+  <div id="zoom"><button type="button" id="z-in" aria-label="放大">+</button><button type="button" id="z-out" aria-label="縮小">−</button></div>
+  <div id="fpbar"><button class="chip" type="button" id="fp-pause">⏸ 暫停</button><button class="chip" type="button" id="fp-exit">✕ 返回俯瞰</button></div>
 
   <header class="top">
     <div class="brand"><span class="name">SafeWalk UK</span><span class="sub">夜歸安全透視 · 3D 視線（實驗）</span><a class="back" href="./">← 返回路線</a></div>
+    <div class="route" id="routeline"></div>
     <nav class="layers" id="layers" aria-label="地圖圖層">
       <button class="chip" type="button" data-layer="risk" aria-pressed="true">綜合風險</button>
       <button class="chip" type="button" data-layer="light" aria-pressed="false">燈光</button>
@@ -97,6 +107,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
       <button class="chip" type="button" id="t-end" aria-pressed="false">設終點</button>
       <button class="chip" type="button" id="t-view" aria-pressed="false">睇視線</button>
       <button class="chip" type="button" id="t-names" aria-pressed="true">地名</button>
+      <button class="chip" type="button" id="t-fp" aria-pressed="false">🚶 第一身預覽</button>
     </div>
     <div class="slider">
       <label for="k">安全優先</label>
@@ -748,8 +759,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
       var h = Math.max(36, SZ * 0.1);
       var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, h, 6), new THREE.MeshBasicMaterial({ color: p[1] })); pole.position.set(p[0][0], h / 2, p[0][1]); pinGroup.add(pole);
       var foot = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 10), new THREE.MeshBasicMaterial({ color: p[1] })); foot.position.set(p[0][0], 2.4, p[0][1]); pinGroup.add(foot);
-      var b = badge(p[3], p[2]); b.position.set(p[0][0], h + SZ * 0.03, p[0][1]); b.scale.setScalar(SZ * 0.06); pinGroup.add(b);
-      if (p[4]) { var lb = label(p[4], p[0][0], h + SZ * 0.085, p[0][1], SZ * 0.2, p[2]); scene.remove(lb); lb.renderOrder = 15; pinGroup.add(lb); }
+      var b = badge(p[3], p[2]); b.position.set(p[0][0], h + SZ * 0.03, p[0][1]); b.scale.setScalar(SZ * 0.045); pinGroup.add(b);
+      if (p[4]) { var lb = label(p[4], p[0][0], h + SZ * 0.085, p[0][1], SZ * 0.12, p[2]); scene.remove(lb); lb.renderOrder = 15; pinGroup.add(lb); }
     });
   }
 
@@ -766,16 +777,16 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     Object.keys(streets).map(function (k) { return [k, streets[k]]; }).sort(function (a, b) { return b[1].len - a[1].len; }).slice(0, 16).forEach(function (e) {
       var pts = e[1].r.pts, half = e[1].len / 2, acc = 0, x = pts[0][0], z = pts[0][1];
       for (var i = 1; i < pts.length; i++) { var sl = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); if (acc + sl >= half) { var t = (half - acc) / (sl || 1); x = pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t; z = pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t; break; } acc += sl; }
-      put(e[0], x, 4, z, SZ * 0.15, 'rgba(232,237,245,0.35)');
+      put(e[0], x, 4, z, SZ * 0.07, 'rgba(232,237,245,0.35)');
     });
     var bl = DATA.buildings.map(function (b, i) { return [i, (Bx1[i] - Bx0[i]) * (Bz1[i] - Bz0[i])]; }).filter(function (q) { return DATA.buildings[q[0]].name; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 10);
-    bl.forEach(function (q) { var b = DATA.buildings[q[0]]; put(b.name, (Bx0[q[0]] + Bx1[q[0]]) / 2, b.h + 5, (Bz0[q[0]] + Bz1[q[0]]) / 2, SZ * 0.17, '#ffd98a'); });
+    bl.forEach(function (q) { var b = DATA.buildings[q[0]]; put(b.name, (Bx0[q[0]] + Bx1[q[0]]) / 2, b.h + 5, (Bz0[q[0]] + Bz1[q[0]]) / 2, SZ * 0.085, '#ffd98a'); });
     var mx = (startPt[0] + endPt[0]) / 2, mz = (startPt[1] + endPt[1]) / 2, used = {};
     DATA.pois.filter(function (p) { return p.name; }).sort(function (a, b) { return Math.hypot(a.x - mx, a.z - mz) - Math.hypot(b.x - mx, b.z - mz); }).forEach(function (p) {
-      if (used[p.name] || Object.keys(used).length >= 12) return; used[p.name] = 1; put(p.name, p.x, 9, p.z, SZ * 0.13, '#40e8e8');
+      if (used[p.name] || Object.keys(used).length >= 12) return; used[p.name] = 1; put(p.name, p.x, 9, p.z, SZ * 0.065, '#40e8e8');
     });
     DATA.areas.filter(function (a) { return a.name && a.kind === 'green'; }).slice(0, 4).forEach(function (a) {
-      var x = 0, z = 0; a.pts.forEach(function (p) { x += p[0]; z += p[1]; }); put(a.name, x / a.pts.length, 6, z / a.pts.length, SZ * 0.16, '#3d8f5a');
+      var x = 0, z = 0; a.pts.forEach(function (p) { x += p[0]; z += p[1]; }); put(a.name, x / a.pts.length, 6, z / a.pts.length, SZ * 0.08, '#3d8f5a');
     });
   }
 
@@ -791,7 +802,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     drawLine(simplify(f.pts, 1.4), 0xff9b3d, 0.7, 0.9);
     drawLine(simplify(s.pts, 1.4), 0x3ee6a8, 1.0, 1.1);
     walkPath = simplify(s.pts, 1.4); walkLen = 0; for (var i = 1; i < walkPath.length; i++) walkLen += Math.hypot(walkPath[i][0] - walkPath[i - 1][0], walkPath[i][1] - walkPath[i - 1][1]);
-    walker.visible = walkLen > 0;
+    walker.visible = walkLen > 0 && !fp.on;
+    (function () { var rl = document.getElementById('routeline'); function nm(n, d) { return n ? n : d; } rl.innerHTML = '<b class="a">A</b>' + esc(nm(FN, '起點')) + ' → <b class="b">B</b>' + esc(nm(TN, '終點')) + '<em>路線 ' + Math.round(s.len) + ' m · 約 ' + s.mins.toFixed(0) + ' 分鐘</em>'; })();
     function pct(n) { return n + '%'; }
     function better(a, b, lowGood) { return a === b ? ['', ''] : ((lowGood ? a < b : a > b) ? ['good', ''] : ['', 'good']); }
     var rows = [
@@ -836,11 +848,43 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   var orb = { theta: 0.0, phi: 0.95, r: SZ * 1.2, tx: (startPt[0] + endPt[0]) / 2, ty: 0, tz: (startPt[1] + endPt[1]) / 2 + SZ * 0.12 };
   var userZoom = false, mode = null;
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  function esc(x) { return String(x).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  var fp = { on: false, paused: false, d: 0 };
+  function posAt(d) {
+    var acc = 0;
+    for (var i = 1; i < walkPath.length; i++) {
+      var sl = Math.hypot(walkPath[i][0] - walkPath[i - 1][0], walkPath[i][1] - walkPath[i - 1][1]);
+      if (acc + sl >= d || i === walkPath.length - 1) { var u = sl > 0 ? Math.min(1, (d - acc) / sl) : 0; return [walkPath[i - 1][0] + (walkPath[i][0] - walkPath[i - 1][0]) * u, walkPath[i - 1][1] + (walkPath[i][1] - walkPath[i - 1][1]) * u]; }
+      acc += sl;
+    }
+    return walkPath[0];
+  }
+  var fpYaw = null;
   function placeCamera() {
+    if (fp.on && walkPath && walkLen > 0) {
+      var p = posAt(fp.d), q = posAt(Math.min(walkLen, fp.d + 14));
+      if (Math.hypot(q[0] - p[0], q[1] - p[1]) < 1) { q = posAt(Math.max(0, fp.d - 14)); q = [2 * p[0] - q[0], 2 * p[1] - q[1]]; }
+      var tx = q[0], tz = q[1];
+      if (fpYaw === null) fpYaw = Math.atan2(tx - p[0], tz - p[1]); else { var want = Math.atan2(tx - p[0], tz - p[1]), dd = want - fpYaw; dd = Math.atan2(Math.sin(dd), Math.cos(dd)); fpYaw += dd * 0.12; }
+      camera.position.set(p[0], 1.7, p[1]);
+      camera.lookAt(p[0] + Math.sin(fpYaw) * 20, 1.5, p[1] + Math.cos(fpYaw) * 20);
+      return;
+    }
     var sp = Math.sin(orb.phi);
     camera.position.set(orb.tx + orb.r * sp * Math.sin(orb.theta), orb.ty + orb.r * Math.cos(orb.phi), orb.tz + orb.r * sp * Math.cos(orb.theta));
     camera.lookAt(orb.tx, orb.ty, orb.tz);
   }
+  function setFP(on) {
+    if (on && !(walkLen > 0)) return;
+    fp.on = on; fp.d = 0; fp.paused = false; fpYaw = null; camera.fov = on ? 72 : 45; camera.near = on ? 0.4 : 1; camera.updateProjectionMatrix();
+    document.getElementById('t-fp').setAttribute('aria-pressed', String(on)); document.getElementById('fpbar').classList.toggle('on', on); document.getElementById('fp-pause').textContent = '⏸ 暫停';
+    document.getElementById('zoom').style.display = on ? 'none' : '';
+    walker.visible = !on && walkLen > 0; viewinfoHide();
+    if (on) { cardEl.classList.add('collapsed'); tgl.textContent = '展開'; mode = null; }
+  }
+  function viewinfoHide() { var v = document.getElementById('viewinfo'); if (v) v.hidden = true; }
+  document.getElementById('z-in').addEventListener('click', function () { userZoom = true; orb.r = clamp(orb.r * 0.72, 12, 2500); });
+  document.getElementById('z-out').addEventListener('click', function () { userZoom = true; orb.r = clamp(orb.r * 1.38, 12, 2500); });
   function resize() {
     var w = stage.clientWidth || 1, h = stage.clientHeight || 1;
     renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -877,7 +921,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
       else { orb.theta -= dx * 0.008; orb.phi = clamp(orb.phi - dy * 0.006, 0.2, 1.45); }
     } else if (ptrs.size === 2) {
       var a = Array.from(ptrs.values()), d = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y), c = { x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2 };
-      if (pinchD > 0) { orb.r = clamp(orb.r * pinchD / d, 40, 2500); userZoom = true; }
+      if (pinchD > 0) { orb.r = clamp(orb.r * pinchD / d, 12, 2500); userZoom = true; }
       if (pinchC) pan(c.x - pinchC.x, c.y - pinchC.y);
       pinchD = d; pinchC = c;
     }
@@ -889,14 +933,14 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     if (!ptrs.size) down = null;
   }
   el.addEventListener('pointerup', endPtr); el.addEventListener('pointercancel', endPtr);
-  el.addEventListener('wheel', function (e) { e.preventDefault(); userZoom = true; orb.r = clamp(orb.r * Math.exp(e.deltaY * 0.001), 40, 2500); }, { passive: false });
+  el.addEventListener('wheel', function (e) { e.preventDefault(); userZoom = true; orb.r = clamp(orb.r * Math.exp(e.deltaY * 0.001), 12, 2500); }, { passive: false });
 
   function onTap(x, y) {
     if (!mode) return;
     var g = groundAt(x, y); if (!g || g[0] < 0 || g[1] < 0 || g[0] > DW || g[1] > DD) return;
     if (mode === 'view') { showView(g[0], g[1]); return; }
     var sn = snap(g[0], g[1]), pt = [cx(sn[0]), cz(sn[1])];
-    if (mode === 'start') startPt = pt; else endPt = pt;
+    if (mode === 'start') { startPt = pt; FN = '自選起點'; } else { endPt = pt; TN = '自選終點'; }
     drawPins(); recompute(); setMode(null);
   }
   var tools = { start: document.getElementById('t-start'), end: document.getElementById('t-end'), view: document.getElementById('t-view') };
@@ -912,12 +956,18 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   var cardEl = document.getElementById('card'), tgl = document.getElementById('card-toggle');
   tgl.addEventListener('click', function () { var c = cardEl.classList.toggle('collapsed'); tgl.textContent = c ? '展開' : '收起'; tgl.setAttribute('aria-expanded', String(!c)); });
 
+  document.getElementById('t-fp').addEventListener('click', function () { setFP(!fp.on); });
+  document.getElementById('fp-exit').addEventListener('click', function () { setFP(false); });
+  document.getElementById('fp-pause').addEventListener('click', function () { fp.paused = !fp.paused; this.textContent = fp.paused ? '▶ 播放' : '⏸ 暫停'; });
   /* ---- loop ---- */
   var last = performance.now(), wt = 0;
   function frame(now) {
     requestAnimationFrame(frame);
     var dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (fp.on && !fp.paused && walkLen > 0) { fp.d += dt * 9; if (fp.d > walkLen + 25) fp.d = 0; fp.d = Math.min(fp.d, walkLen + 25); }
     placeCamera();
+    var far = fp.on ? 110 : 1e9, cpx = camera.position.x, cpz = camera.position.z;
+    namesGroup.children.forEach(function (c) { c.visible = Math.hypot(c.position.x - cpx, c.position.z - cpz) < far; });
     if (walker.visible && walkLen > 0) {
       wt = (wt + dt * 14) % (walkLen + 20);
       var d = Math.min(wt, walkLen), acc = 0;
