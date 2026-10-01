@@ -148,7 +148,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   function toX(lng) { return (lng - west) * mLng; }
   function toZ(lat) { return (north - lat) * mLat; }
 
-  var OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  var OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
   function timeoutFetch(url, opts, ms) {
     var c = new AbortController(), id = setTimeout(function () { c.abort(); }, ms);
     opts = opts || {}; opts.signal = c.signal;
@@ -164,12 +164,16 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
       'node["highway"="street_lamp"](' + bb + ');node["man_made"="surveillance"](' + bb + ');' +
       'node["amenity"~"pub|bar|fuel|restaurant|fast_food|pharmacy"](' + bb + ');node["shop"~"convenience|supermarket"](' + bb + ');' +
       ');out geom tags;';
-    var i = 0;
+    var key = 'sw3d_' + bb, tries = 0, maxTries = OVERPASS.length * 2;
+    try { var cached = sessionStorage.getItem(key); if (cached) return Promise.resolve(JSON.parse(cached)); } catch (e) {}
     function next() {
-      if (i >= OVERPASS.length) return Promise.reject(new Error('osm'));
-      var srv = OVERPASS[i++];
-      return timeoutFetch(srv, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 35000)
-        .then(function (r) { if (!r.ok) throw new Error('osm ' + r.status); return r.json(); })
+      if (tries >= maxTries) return Promise.reject(new Error('osm'));
+      var srv = OVERPASS[tries % OVERPASS.length], wait = tries > 0 && tries % OVERPASS.length === 0 ? 1500 : 0;
+      tries++;
+      return new Promise(function (r) { setTimeout(r, wait); }).then(function () {
+        return timeoutFetch(srv, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 30000);
+      }).then(function (r) { if (!r.ok) throw new Error('osm ' + r.status); return r.json(); })
+        .then(function (j) { if (!j || !j.elements) throw new Error('osm empty'); try { sessionStorage.setItem(key, JSON.stringify(j)); } catch (e) {} return j; })
         .catch(function () { return next(); });
     }
     return next();
@@ -252,7 +256,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     loadEl.textContent = '計算燈光、CCTV 同視線…';
     setTimeout(boot, 30);
   }).catch(function () {
-    fail('未能載入地圖數據（Overpass 暫時繁忙或網絡有問題），請稍後再試。');
+    fail('未能載入地圖數據：OpenStreetMap 嘅免費 Overpass 伺服器暫時繁忙（已試 3 個伺服器各 2 次）。請等一兩分鐘後重新整理。');
   });
 
   function boot() {
