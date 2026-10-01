@@ -14,26 +14,26 @@ th{color:var(--muted);font-weight:500}
 .note{font-size:.75rem}
 </style></head><body>
 <h1>數據覆蓋檢查</h1>
-<p>量度每個地點 600 米範圍內，OpenStreetMap 同 police.uk 有幾多資料，睇邊度最適合試 3D 視線。要連去外部伺服器，請喺你部手機或電腦撳開始（約 1 分鐘）。</p>
+<p>量度每個地點約 1 公里 × 1.2 公里範圍內，OpenStreetMap 同 police.uk 有幾多資料，睇邊度最適合試 3D 視線。要連去外部伺服器，請喺你部手機或電腦撳開始（約 1 分鐘）。</p>
 <button id="go">開始檢查</button> <span id="st" class="note"></span>
 <table><thead><tr><th>地點</th><th>街燈</th><th>lit 路段</th><th>CCTV</th><th>樓宇</th><th>罪案/月</th><th></th></tr></thead><tbody id="rows"></tbody></table>
 <p class="note">評分：街燈 + lit 路段數量愈多，燈光分析愈可信；CCTV 愈多，監控覆蓋愈有意義。OSM 資料由義工提供，覆蓋度因地而異。罪案數字僅供參考，位置為大約。</p>
 <script>
 (function(){
 var PLACES=[['Guildford 市中心',51.2362,-0.5704],['Camberley',51.3361,-0.7436],['Reading 火車站',51.4585,-0.9715],['倫敦 City（Cheapside）',51.5138,-0.0935],['倫敦 Soho',51.5136,-0.1365],['倫敦 Shoreditch',51.5246,-0.0780],['Manchester Northern Quarter',53.4842,-2.2364],['Birmingham Bullring',52.4774,-1.8940],['Leeds 市中心',53.7965,-1.5436],['Bristol Harbourside',51.4500,-2.5970],['Cambridge 市中心',52.2053,0.1218],['Southampton 市中心',50.9025,-1.4042]];
-var SRV=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter','https://overpass.private.coffee/api/interpreter'];
+var SRV=['api/overpass','https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter','https://overpass.private.coffee/api/interpreter'];
 var tb=document.getElementById('rows'),st=document.getElementById('st'),btn=document.getElementById('go');
 function tf(u,o,ms){var c=new AbortController(),id=setTimeout(function(){c.abort()},ms);o=o||{};o.signal=c.signal;return fetch(u,o).finally(function(){clearTimeout(id)});}
 function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
 var LASTERR='';
 function counts(lat,lng){
-  var a='(around:600,'+lat+','+lng+')';
+  var a='('+(lat-0.0054).toFixed(5)+','+(lng-0.0088).toFixed(5)+','+(lat+0.0054).toFixed(5)+','+(lng+0.0088).toFixed(5)+')';
   var q='[out:json][timeout:20];node["highway"="street_lamp"]'+a+';out count;way["highway"]["lit"~"^(yes|24/7|automatic)$"]'+a+';out count;node["man_made"="surveillance"]'+a+';out count;way["building"]'+a+';out count;';
   var i=0,errs=[];
   function next(){
     if(i>=SRV.length){LASTERR=errs.join(' / ');return Promise.reject(new Error('osm'));}
-    var s=SRV[i%SRV.length],host=s.split('/')[2];i++;
-    return tf(s+'?data='+encodeURIComponent(q),null,20000)
+    var s=SRV[i%SRV.length],host=s==='api/overpass'?'proxy':s.split('/')[2];i++;
+    return (s==='api/overpass'?tf(s+'?data='+encodeURIComponent(q),null,28000):tf(s+'?data='+encodeURIComponent(q),null,20000))
       .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
       .then(function(j){var c=(j.elements||[]).filter(function(e){return e.type==='count'}).map(function(e){return +e.tags.total});if(c.length<4)throw new Error(j.remark?String(j.remark).slice(0,60):'no count');return c;})
       .catch(function(e){errs.push(host+': '+(e&&e.name==='AbortError'?'timeout':(e&&e.message)||'blocked'));return sleep(700).then(next);});
