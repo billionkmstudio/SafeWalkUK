@@ -184,7 +184,39 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     }
     return next();
   }
+  // Tiles: fixed 0.01 x 0.015 degree cells served from our own store (api/tile) so repeat areas load instantly.
+  var tileInfo = { used: 0, store: 0, total: 0 };
+  function fetchTiles() {
+    var DLAT = 0.01, DLNG = 0.015, list = [], ix, iy;
+    for (iy = Math.floor(south / DLAT); iy <= Math.floor(north / DLAT); iy++) for (ix = Math.floor(west / DLNG); ix <= Math.floor(east / DLNG); ix++) list.push([ix, iy]);
+    if (list.length > 12) return Promise.reject(new Error('too many tiles'));
+    tileInfo.total = list.length;
+    function one(t, attempt) {
+      return timeoutFetch('api/tile?x=' + t[0] + '&y=' + t[1], null, 45000).then(function (r) {
+        if (!r.ok) throw new Error('tile HTTP ' + r.status);
+        if (r.headers.get('X-Tile-Source') === 'store') tileInfo.store++;
+        return r.json();
+      }).then(function (j) { if (!j || !j.b) throw new Error('tile empty'); return j; })
+        .catch(function (e) { if (attempt < 1) return one(t, attempt + 1); throw e; });
+    }
+    function inBox(e) {
+      if (e.type === 'node') return e.lat >= south && e.lat <= north && e.lon >= west && e.lon <= east;
+      var g = e.geometry; if (!g) return true;
+      for (var q = 0; q < g.length; q++) if (g[q].lat >= south && g[q].lat <= north && g[q].lon >= west && g[q].lon <= east) return true;
+      return false;
+    }
+    var res = [], idx = 0;
+    function worker() { if (idx >= list.length) return Promise.resolve(); var t = list[idx++]; return one(t, 0).then(function (j) { res.push(j); return worker(); }); }
+    return Promise.all([worker(), worker(), worker()]).then(function () {
+      var seen = {}, els = [];
+      res.forEach(function (tile) { [tile.b, tile.r, tile.n].forEach(function (arr) { arr.forEach(function (e) { var k = e.type + e.id; if (!seen[k] && inBox(e)) { seen[k] = 1; els.push(e); } }); }); });
+      tileInfo.used = 1; return { elements: els };
+    });
+  }
   function fetchOSM() {
+    return fetchTiles().catch(function (e) { osmErrs.push('tiles: ' + ((e && e.message) || 'failed')); return fetchOSMDirect(); });
+  }
+  function fetchOSMDirect() {
     var bb = south.toFixed(5) + ',' + west.toFixed(5) + ',' + north.toFixed(5) + ',' + east.toFixed(5), H = '[out:json][timeout:25];';
     // three smaller queries run in parallel: each is faster, cacheable on its own, and fits the server time limit
     var qB = H + 'way["building"](' + bb + ');out geom;';
