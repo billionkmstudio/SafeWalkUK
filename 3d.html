@@ -835,6 +835,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     drawLine(simplify(s.pts, 1.4), 0x3ee6a8, 1.0, 1.1);
     walkPath = simplify(s.pts, 1.4); walkLen = 0; for (var i = 1; i < walkPath.length; i++) walkLen += Math.hypot(walkPath[i][0] - walkPath[i - 1][0], walkPath[i][1] - walkPath[i - 1][1]);
     walker.visible = walkLen > 0 && !fp.on;
+    if (fp.on) { buildFpPath(); fp.d = Math.min(fp.d, walkLen); }
     (function () { var rl = document.getElementById('routeline'); function nm(n, d) { return n ? n : d; } rl.innerHTML = '<b class="a">A</b>' + esc(nm(FN, '起點')) + ' → <b class="b">B</b>' + esc(nm(TN, '終點')) + '<em>路線 ' + Math.round(s.len) + ' m · 約 ' + s.mins.toFixed(0) + ' 分鐘</em>'; })();
     function pct(n) { return n + '%'; }
     function better(a, b, lowGood) { return a === b ? ['', ''] : ((lowGood ? a < b : a > b) ? ['good', ''] : ['', 'good']); }
@@ -891,7 +892,14 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     }
     return walkPath[0];
   }
-  var fpYaw = null;
+  var fpYaw = null, fpGroup = new THREE.Group(); scene.add(fpGroup);
+  function buildFpPath() {
+    clearGroup(fpGroup); var mat = new THREE.MeshBasicMaterial({ color: 0x3ee6a8 });
+    for (var i = 0; i < walkPath.length - 1; i++) {
+      var a = walkPath[i], b = walkPath[i + 1], len = Math.hypot(b[0] - a[0], b[1] - a[1]); if (len < 0.05) continue;
+      var m = new THREE.Mesh(new THREE.BoxGeometry(len + 0.4, 0.04, 0.7), mat); m.position.set((a[0] + b[0]) / 2, 0.14, (a[1] + b[1]) / 2); m.rotation.y = -Math.atan2(b[1] - a[1], b[0] - a[0]); fpGroup.add(m);
+    }
+  }
   function placeCamera() {
     if (fp.on && walkPath && walkLen > 0) {
       var p = posAt(fp.d), q = posAt(Math.min(walkLen, fp.d + 14));
@@ -912,6 +920,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     document.getElementById('t-fp').setAttribute('aria-pressed', String(on)); document.getElementById('fpbar').classList.toggle('on', on); document.getElementById('fp-pause').textContent = '⏸ 暫停';
     document.getElementById('zoom').style.display = on ? 'none' : '';
     walker.visible = !on && walkLen > 0; viewinfoHide();
+    routeGroup.visible = !on; fpGroup.visible = on; if (on) buildFpPath();
+    if (!on) { pinGroup.children.forEach(function (c) { c.visible = true; }); namesGroup.children.forEach(function (c) { if (c.userData.s0) c.scale.set(c.userData.s0, c.userData.s0 * 80 / 384, 1); }); }
     if (on) { cardEl.classList.add('collapsed'); tgl.textContent = '展開'; mode = null; }
   }
   function viewinfoHide() { var v = document.getElementById('viewinfo'); if (v) v.hidden = true; }
@@ -999,7 +1009,12 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     if (fp.on && !fp.paused && walkLen > 0) { fp.d += dt * 9; if (fp.d > walkLen + 25) fp.d = 0; fp.d = Math.min(fp.d, walkLen + 25); }
     placeCamera();
     var far = fp.on ? 110 : 1e9, cpx = camera.position.x, cpz = camera.position.z;
-    namesGroup.children.forEach(function (c) { c.visible = Math.hypot(c.position.x - cpx, c.position.z - cpz) < far; });
+    namesGroup.children.forEach(function (c) {
+      var d = Math.hypot(c.position.x - cpx, c.position.z - cpz);
+      if (!c.userData.s0) c.userData.s0 = c.scale.x;
+      if (fp.on) { c.visible = d > 14 && d < far; var w = Math.min(c.userData.s0, 0.15 * d); c.scale.set(w, w * 80 / 384, 1); } else c.visible = true;
+    });
+    if (fp.on) pinGroup.children.forEach(function (c) { c.visible = Math.hypot(c.position.x - cpx, c.position.z - cpz) > 20; });
     if (walker.visible && walkLen > 0) {
       wt = (wt + dt * 14) % (walkLen + 20);
       var d = Math.min(wt, walkLen), acc = 0;
