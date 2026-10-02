@@ -195,12 +195,12 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     if (list.length > 12) return Promise.reject(new Error('too many tiles'));
     tileInfo.total = list.length;
     function one(t, attempt) {
-      return timeoutFetch('api/tile?x=' + t[0] + '&y=' + t[1], null, 45000).then(function (r) {
+      return timeoutFetch('api/tile?x=' + t[0] + '&y=' + t[1], null, 62000).then(function (r) {
         if (!r.ok) throw new Error('tile HTTP ' + r.status);
         if (r.headers.get('X-Tile-Source') === 'store') tileInfo.store++;
         return r.json();
       }).then(function (j) { if (!j || !j.b) throw new Error('tile empty'); return j; })
-        .catch(function (e) { if (attempt < 1) return one(t, attempt + 1); throw e; });
+        .catch(function (e) { if (attempt < 2) return new Promise(function (r) { setTimeout(r, 1500); }).then(function () { return one(t, attempt + 1); }); throw e; });
     }
     function inBox(e) {
       if (e.type === 'node') return e.lat >= south && e.lat <= north && e.lon >= west && e.lon <= east;
