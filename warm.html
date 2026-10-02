@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>SafeWalk UK · 預載地圖數據</title>
+<style>
+:root { --bg:#0a0f1a; --panel:#111a2b; --line:#233049; --ink:#e8edf5; --muted:#8a98b0; --accent:#3ee6a8; --bad:#ff6b6b; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,"Noto Sans TC",sans-serif; }
+main { max-width:40rem; margin:0 auto; padding:20px 16px 60px; }
+h1 { font-size:1.25rem; margin:0 0 4px; } p.sub { color:var(--muted); margin:0 0 16px; font-size:.875rem; }
+.card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:12px; }
+label.row { display:flex; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line); cursor:pointer; }
+label.row:last-child { border-bottom:0; } label.row small { color:var(--muted); margin-left:auto; white-space:nowrap; }
+input[type=checkbox] { width:20px; height:20px; accent-color:var(--accent); }
+.custom { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:8px; } .custom input { width:100%; padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--ink); font-size:1rem; }
+button { font:600 1rem/1 inherit; min-height:44px; padding:0 18px; border-radius:999px; border:1px solid var(--line); background:var(--panel); color:var(--ink); cursor:pointer; }
+button.go { background:var(--accent); color:#04140d; border-color:transparent; } button:disabled { opacity:.5; }
+.bar { height:10px; background:var(--bg); border:1px solid var(--line); border-radius:999px; overflow:hidden; margin:10px 0; } .bar i { display:block; height:100%; width:0; background:var(--accent); transition:width .3s; }
+#log { font:12px/1.5 ui-monospace,monospace; color:var(--muted); max-height:12rem; overflow:auto; white-space:pre-wrap; } .bad { color:var(--bad); }
+</style></head><body><main>
+<h1>預載地圖數據</h1>
+<p class="sub">將指定地區嘅 OpenStreetMap 數據預先存入我哋自己嘅儲存（Vercel Blob），之後用戶查呢啲地區就唔使等。請保持頁面開住直至完成。已存嘅格仔會秒過。</p>
+<div class="card" id="presets"></div>
+<div class="card"><b>自訂範圍</b><div class="custom"><input id="clat" inputmode="decimal" placeholder="緯度 51.51"><input id="clng" inputmode="decimal" placeholder="經度 -0.09"><input id="crad" inputmode="decimal" placeholder="半徑 km 2"></div></div>
+<div style="display:flex;gap:10px;flex-wrap:wrap"><button class="go" id="go">開始預載</button><button id="stop" disabled>停止</button><a href="./" style="align-self:center;color:var(--accent);font-size:.875rem">← 返回</a></div>
+<div class="card" style="margin-top:14px"><div id="stat">未開始</div><div class="bar"><i id="fill"></i></div><div id="log"></div></div>
+</main>
+<script>
+(function () {
+  var DLAT = 0.01, DLNG = 0.015;
+  var PRESETS = [
+    ['倫敦市中心（City、Westminster、South Bank）', 51.490, 51.540, -0.170, -0.050],
+    ['倫敦擴大（Camden、Shoreditch、Kensington、Greenwich 邊緣）', 51.470, 51.560, -0.230, 0.020],
+    ['曼徹斯特市中心', 53.465, 53.500, -2.280, -2.200],
+    ['伯明翰市中心', 52.465, 52.495, -1.930, -1.870],
+    ['利物浦市中心', 53.395, 53.425, -3.020, -2.960],
+    ['愛丁堡市中心', 55.935, 55.965, -3.230, -3.150],
+    ['Guildford / Camberley', 51.225, 51.250, -0.620, -0.540]
+  ];
+  var pe = document.getElementById('presets'), log = document.getElementById('log'), stat = document.getElementById('stat'), fill = document.getElementById('fill');
+  PRESETS.forEach(function (p, i) { pe.insertAdjacentHTML('beforeend', '<label class="row"><input type="checkbox" data-i="' + i + '"' + (i === 0 ? ' checked' : '') + '><span>' + p[0] + '</span><small>' + tiles(p[1], p[2], p[3], p[4]).length + ' 格</small></label>'); });
+  function tiles(s, n, w, e) { var l = [], iy, ix; for (iy = Math.floor(s / DLAT); iy <= Math.floor(n / DLAT); iy++) for (ix = Math.floor(w / DLNG); ix <= Math.floor(e / DLNG); ix++) l.push([ix, iy]); return l; }
+  var running = false, stopFlag = false;
+  function say(m, bad) { var d = document.createElement('div'); if (bad) d.className = 'bad'; d.textContent = m; log.appendChild(d); log.scrollTop = log.scrollHeight; }
+  function tget(t) {
+    var c = new AbortController(), id = setTimeout(function () { c.abort(); }, 65000);
+    return fetch('api/tile?x=' + t[0] + '&y=' + t[1], { signal: c.signal }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.headers.get('X-Tile-Source') || 'new'; }).finally(function () { clearTimeout(id); });
+  }
+  function run() {
+    var set = {}, list = [];
+    Array.prototype.forEach.call(document.querySelectorAll('#presets input:checked'), function (c) { var p = PRESETS[+c.getAttribute('data-i')]; tiles(p[1], p[2], p[3], p[4]).forEach(function (t) { set[t[0] + ',' + t[1]] = t; }); });
+    var la = parseFloat(document.getElementById('clat').value), lo = parseFloat(document.getElementById('clng').value), ra = parseFloat(document.getElementById('crad').value) || 2;
+    if (isFinite(la) && isFinite(lo)) tiles(la - ra / 110.5, la + ra / 110.5, lo - ra / (111.3 * Math.cos(la * Math.PI / 180)), lo + ra / (111.3 * Math.cos(la * Math.PI / 180))).forEach(function (t) { set[t[0] + ',' + t[1]] = t; });
+    Object.keys(set).forEach(function (k) { list.push(set[k]); });
+    if (!list.length) { stat.textContent = '請揀至少一個地區'; return; }
+    running = true; stopFlag = false; document.getElementById('go').disabled = true; document.getElementById('stop').disabled = false; log.textContent = '';
+    var total = list.length, done = 0, fresh = 0, cached = 0, pass = 0;
+    function show() { stat.textContent = '完成 ' + done + ' / ' + total + '（新存 ' + fresh + '，原本已有 ' + cached + '）'; fill.style.width = (100 * done / total) + '%'; }
+    function pass1(queue) {
+      var failed = [], idx = 0;
+      function worker() {
+        if (stopFlag || idx >= queue.length) return Promise.resolve();
+        var t = queue[idx++];
+        return tget(t).then(function (src) { done++; if (src === 'store') cached++; else fresh++; show(); }).catch(function (e) { failed.push(t); say('格 ' + t + ' 失敗：' + (e.name === 'AbortError' ? 'timeout' : e.message) + '（稍後重試）', true); }).then(worker);
+      }
+      return Promise.all([worker(), worker()]).then(function () {
+        if (stopFlag) return say('已停止');
+        if (failed.length && ++pass < 4) { say('第 ' + pass + ' 輪完，' + failed.length + ' 格失敗，10 秒後重試…'); return new Promise(function (r) { setTimeout(r, 10000); }).then(function () { return pass1(failed); }); }
+        say(failed.length ? '完成，仍有 ' + failed.length + ' 格失敗，稍後再撳「開始預載」補返。' : '全部完成 ✔', !!failed.length);
+      });
+    }
+    show(); pass1(list).then(function () { running = false; document.getElementById('go').disabled = false; document.getElementById('stop').disabled = true; });
+  }
+  document.getElementById('go').addEventListener('click', function () { if (!running) run(); });
+  document.getElementById('stop').addEventListener('click', function () { stopFlag = true; });
+})();
+</script></body></html>
