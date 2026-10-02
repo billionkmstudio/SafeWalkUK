@@ -75,8 +75,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .route { font-size: 0.8125rem; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; align-self: flex-start; max-width: 100%; line-height: 1.4; }
 .route b { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 0.7rem; color: #04140d; margin-right: 4px; }
 .route .a { background: #3ee6a8; } .route .b { background: #5aa8ff; } .route em { font-style: normal; color: var(--accent); margin-left: 6px; white-space: nowrap; }
-#fpbar { position: absolute; left: 50%; bottom: 175px; transform: translateX(-50%); display: none; gap: 8px; z-index: 6; }
+#fpbar { position: absolute; left: 50%; bottom: 175px; transform: translateX(-50%); display: none; flex-direction: column; align-items: center; gap: 8px; z-index: 6; width: calc(100% - 32px); max-width: 34rem; }
 #fpbar.on { display: flex; }
+#fpbar .fprow { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+#fp-text { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; font-size: 0.9rem; text-align: center; line-height: 1.4; }
+#fpbar .go { background: var(--accent); color: #04140d; border-color: transparent; font-weight: 700; }
 .back { font-size: 0.75rem; color: var(--accent); text-decoration: none; margin-left: auto; pointer-events: auto; }
 </style>
 
@@ -84,7 +87,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 <main id="app">
   <div id="stage" tabindex="0" aria-label="夜間街區 3D 地圖"></div>
   <div id="zoom"><button type="button" id="z-in" aria-label="放大">+</button><button type="button" id="z-out" aria-label="縮小">−</button></div>
-  <div id="fpbar"><button class="chip" type="button" id="fp-pause">⏸ 暫停</button><button class="chip" type="button" id="fp-exit">✕ 返回俯瞰</button></div>
+  <div id="fpbar"><div id="fp-text"></div><div class="fprow"><button class="chip" type="button" id="fp-prev">◀ 上一步</button><button class="chip go" type="button" id="fp-next">下一步 ▶</button><button class="chip" type="button" id="fp-auto" aria-pressed="false">自動播放</button><button class="chip" type="button" id="fp-exit">✕ 返回俯瞰</button></div></div>
 
   <header class="top">
     <div class="brand"><span class="name">SafeWalk UK</span><span class="sub">夜歸安全透視 · 3D 視線（實驗）</span><a class="back" href="./">← 返回路線</a></div>
@@ -835,7 +838,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     drawLine(simplify(s.pts, 1.4), 0x3ee6a8, 1.0, 1.1);
     walkPath = simplify(s.pts, 1.4); walkLen = 0; for (var i = 1; i < walkPath.length; i++) walkLen += Math.hypot(walkPath[i][0] - walkPath[i - 1][0], walkPath[i][1] - walkPath[i - 1][1]);
     walker.visible = walkLen > 0 && !fp.on;
-    if (fp.on) { buildFpPath(); fp.d = Math.min(fp.d, walkLen); }
+    if (fp.on) { buildFpPath(); buildKeys(); fpGo(Math.min(fp.si, fp.keys.length - 1)); fp.d = Math.min(fp.d, walkLen); }
     (function () { var rl = document.getElementById('routeline'); function nm(n, d) { return n ? n : d; } rl.innerHTML = '<b class="a">A</b>' + esc(nm(FN, '起點')) + ' → <b class="b">B</b>' + esc(nm(TN, '終點')) + '<em>路線 ' + Math.round(s.len) + ' m · 約 ' + s.mins.toFixed(0) + ' 分鐘</em>'; })();
     function pct(n) { return n + '%'; }
     function better(a, b, lowGood) { return a === b ? ['', ''] : ((lowGood ? a < b : a > b) ? ['good', ''] : ['', 'good']); }
@@ -882,7 +885,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   var userZoom = false, mode = null;
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
   function esc(x) { return String(x).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
-  var fp = { on: false, paused: false, d: 0 };
+  var fp = { on: false, auto: false, d: 0, target: 0, si: 0, keys: [0], wait: 0 };
   function posAt(d) {
     var acc = 0;
     for (var i = 1; i < walkPath.length; i++) {
@@ -893,6 +896,26 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     return walkPath[0];
   }
   var fpYaw = null, fpGroup = new THREE.Group(); scene.add(fpGroup);
+  function buildKeys() {
+    var cum = [0], i, kp = simplify(walkPath, 5), keys = [0];
+    for (i = 1; i < walkPath.length; i++) cum.push(cum[i - 1] + Math.hypot(walkPath[i][0] - walkPath[i - 1][0], walkPath[i][1] - walkPath[i - 1][1]));
+    kp.forEach(function (q) { for (var j = 0; j < walkPath.length; j++) if (walkPath[j][0] === q[0] && walkPath[j][1] === q[1]) { keys.push(cum[j]); break; } });
+    keys.push(walkLen); keys.sort(function (a, b) { return a - b; });
+    fp.keys = keys.filter(function (v, k) { return k === 0 || v - keys[k - 1] > 4; });
+    if (fp.keys.length < 2) fp.keys = [0, walkLen];
+  }
+  function fpText() {
+    var el = document.getElementById('fp-text'), n = fp.keys.length - 1, s = fp.si;
+    if (s >= n) { el.textContent = '✔ 到達終點（B）' + (TN ? '：' + TN : ''); return; }
+    var a = posAt(fp.keys[s]), b = posAt(fp.keys[s + 1]), len = Math.round(fp.keys[s + 1] - fp.keys[s]), turn = '到達終點';
+    if (s + 1 < n) {
+      var c = posAt(Math.min(walkLen, fp.keys[s + 1] + 12)), d1 = [b[0] - a[0], b[1] - a[1]], d2 = [c[0] - b[0], c[1] - b[1]];
+      var ang = Math.atan2(d1[0] * d2[1] - d1[1] * d2[0], d1[0] * d2[0] + d1[1] * d2[1]) * 180 / Math.PI;
+      turn = Math.abs(ang) < 25 ? '然後直行' : (ang > 0 ? '然後右轉' : '然後左轉');
+    }
+    el.textContent = (s === 0 ? '出發：' : '') + '第 ' + (s + 1) + '/' + n + ' 段 · 前行 ' + len + ' m，' + turn;
+  }
+  function fpGo(si) { fp.si = Math.max(0, Math.min(fp.keys.length - 1, si)); fp.target = fp.keys[fp.si]; fp.wait = 0; fpText(); }
   function buildFpPath() {
     clearGroup(fpGroup); var mat = new THREE.MeshBasicMaterial({ color: 0x3ee6a8 });
     for (var i = 0; i < walkPath.length - 1; i++) {
@@ -916,11 +939,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   }
   function setFP(on) {
     if (on && !(walkLen > 0)) return;
-    fp.on = on; fp.d = 0; fp.paused = false; fpYaw = null; camera.fov = on ? 72 : 45; camera.near = on ? 0.4 : 1; camera.updateProjectionMatrix();
-    document.getElementById('t-fp').setAttribute('aria-pressed', String(on)); document.getElementById('fpbar').classList.toggle('on', on); document.getElementById('fp-pause').textContent = '⏸ 暫停';
+    fp.on = on; fp.d = 0; fp.auto = false; fp.si = 0; fp.target = 0; fpYaw = null; camera.fov = on ? 72 : 45; camera.near = on ? 0.4 : 1; camera.updateProjectionMatrix();
+    document.getElementById('t-fp').setAttribute('aria-pressed', String(on)); document.getElementById('fpbar').classList.toggle('on', on); document.getElementById('fp-auto').setAttribute('aria-pressed', 'false');
     document.getElementById('zoom').style.display = on ? 'none' : '';
     walker.visible = !on && walkLen > 0; viewinfoHide();
-    routeGroup.visible = !on; fpGroup.visible = on; if (on) buildFpPath();
+    routeGroup.visible = !on; fpGroup.visible = on; if (on) { buildFpPath(); buildKeys(); fp.si = 0; fpText(); document.getElementById('fp-text').textContent = '按「下一步」出發 · ' + document.getElementById('fp-text').textContent; }
     if (!on) { pinGroup.children.forEach(function (c) { c.visible = true; }); namesGroup.children.forEach(function (c) { if (c.userData.s0) c.scale.set(c.userData.s0, c.userData.s0 * 80 / 384, 1); }); }
     if (on) { cardEl.classList.add('collapsed'); tgl.textContent = '展開'; mode = null; }
   }
@@ -1000,13 +1023,19 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 
   document.getElementById('t-fp').addEventListener('click', function () { setFP(!fp.on); });
   document.getElementById('fp-exit').addEventListener('click', function () { setFP(false); });
-  document.getElementById('fp-pause').addEventListener('click', function () { fp.paused = !fp.paused; this.textContent = fp.paused ? '▶ 播放' : '⏸ 暫停'; });
+  document.getElementById('fp-next').addEventListener('click', function () { fp.auto = false; document.getElementById('fp-auto').setAttribute('aria-pressed', 'false'); if (fp.d < fp.target - 0.5) fp.d = fp.target; fpGo(fp.si + 1); });
+  document.getElementById('fp-prev').addEventListener('click', function () { fp.auto = false; document.getElementById('fp-auto').setAttribute('aria-pressed', 'false'); fpGo(fp.si - 1); });
+  document.getElementById('fp-auto').addEventListener('click', function () { fp.auto = !fp.auto; this.setAttribute('aria-pressed', String(fp.auto)); if (fp.auto && fp.si >= fp.keys.length - 1) fpGo(0); });
   /* ---- loop ---- */
   var last = performance.now(), wt = 0;
   function frame(now) {
     requestAnimationFrame(frame);
     var dt = Math.min(0.05, (now - last) / 1000); last = now;
-    if (fp.on && !fp.paused && walkLen > 0) { fp.d += dt * 9; if (fp.d > walkLen + 25) fp.d = 0; fp.d = Math.min(fp.d, walkLen + 25); }
+    if (fp.on && walkLen > 0) {
+      var sp = dt * 14;
+      if (fp.d < fp.target) fp.d = Math.min(fp.target, fp.d + sp); else if (fp.d > fp.target) fp.d = Math.max(fp.target, fp.d - sp * 2);
+      if (fp.auto && fp.d === fp.target) { fp.wait += dt; if (fp.wait > 0.9) { if (fp.si < fp.keys.length - 1) fpGo(fp.si + 1); else fp.auto = false; } }
+    }
     placeCamera();
     var far = fp.on ? 110 : 1e9, cpx = camera.position.x, cpz = camera.position.z;
     namesGroup.children.forEach(function (c) {
