@@ -5,7 +5,7 @@
 // (Live Companion) calls always go to the network — caching those would risk showing
 // stale/wrong safety information, which is worse than showing an error.
 
-const SW_VERSION = 'v1.9.2';
+const SW_VERSION = 'v1.9.3';
 const SHELL_CACHE = `safewalk-shell-${SW_VERSION}`;
 const RUNTIME_CACHE = `safewalk-runtime-${SW_VERSION}`;
 const TILE_CACHE = `safewalk-tiles-${SW_VERSION}`;
@@ -89,11 +89,14 @@ self.addEventListener('fetch', event => {
   // 2) Navigations (opening/reloading the app) — network first, fall back to the
   //    cached shell so the app still opens with no signal.
   if (req.mode === 'navigate') {
+    // Only the app itself ('/' or '/index.html') refreshes the cached shell.
+    // Content pages (/how-it-works/, /london/ ...) must never overwrite it.
+    const isApp = url.pathname === '/' || url.pathname === '/index.html';
     event.respondWith(
       fetch(req).then(res => {
-        caches.open(SHELL_CACHE).then(cache => cache.put('/index.html', res.clone()));
+        if (isApp && res.ok) caches.open(SHELL_CACHE).then(cache => cache.put('/index.html', res.clone()));
         return res;
-      }).catch(() => caches.match('/index.html'))
+      }).catch(() => isApp ? caches.match('/index.html') : caches.match(req).then(r => r || caches.match('/index.html')))
     );
     return;
   }
