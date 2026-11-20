@@ -5,7 +5,7 @@
 // (Live Companion) calls always go to the network — caching those would risk showing
 // stale/wrong safety information, which is worse than showing an error.
 
-const SW_VERSION = 'v1.9.3';
+const SW_VERSION = 'v1.9.4';
 const SHELL_CACHE = `safewalk-shell-${SW_VERSION}`;
 const RUNTIME_CACHE = `safewalk-runtime-${SW_VERSION}`;
 const TILE_CACHE = `safewalk-tiles-${SW_VERSION}`;
@@ -39,6 +39,7 @@ const NEVER_CACHE_HOSTS = [
 // Hosts for static libraries/fonts that rarely change — safe to cache and reuse.
 const RUNTIME_CACHEABLE_HOSTS = [
   'cdnjs.cloudflare.com',
+  'unpkg.com',
   'gstatic.com'
 ];
 
